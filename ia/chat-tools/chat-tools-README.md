@@ -20,7 +20,7 @@
 ## Installation des dépendances
 
 ```bash
-pip install openai requests streamlit
+pip install openai requests streamlit ddgs
 ```
 
 

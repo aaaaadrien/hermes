@@ -60,19 +60,23 @@ model       = conf.get("llm",   "model")
 max_tokens  = conf.getint("llm",   "max_tokens",   fallback=2048)
 temperature = conf.getfloat("llm", "temperature",  fallback=0.7)
 
-st.set_page_config(page_title=page_title, page_icon=page_icon, layout="centered")
+#st.set_page_config(page_title=page_title, page_icon=page_icon, layout="centered")
+st.set_page_config(page_title=page_title, page_icon=page_icon, layout="wide")
+
 
 # Interface Streamlit Latérale
 outils = outils_actifs(conf)   # liste filtrée selon [tools] dans le .conf
 
 with st.sidebar:
-    st.header("Session")
+    st.header("Informations")
     st.markdown(f"**Modèle :** `{model}`")
     st.markdown(f"**Température :** `{temperature}`")
     st.markdown(f"**Max tokens :** `{max_tokens}`")
     st.markdown(f"**Outils actifs :** {len(outils)}")
     for o in outils:
-        st.markdown(f"- `{o['function']['name']}`")
+        nom   = o["function"]["name"]
+        icone = ICONES_OUTILS.get(nom, "⚙️")
+        st.markdown(f"{icone} `{nom}`")
     st.divider()
     if st.button("🗑️ Effacer la conversation", use_container_width=True):
         st.session_state.messages = [{"role": "system", "content": sys_prompt}]

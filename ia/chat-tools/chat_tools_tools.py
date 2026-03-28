@@ -10,7 +10,12 @@ Utilisation :
 """
 
 import configparser
+import re
+from datetime import datetime
+
 import requests
+from bs4 import BeautifulSoup
+from ddgs import DDGS
 
 # Récupère le bulletin météo complet pour une ville donnée.
 def outil_meteo(ville: str) -> str:
@@ -63,7 +68,7 @@ def outil_meteo(ville: str) -> str:
         return f"⚠️ Impossible de récupérer la météo ({e})."
 
 # Retourne le résumé Wikipédia (version française) du sujet demandé.
-def outil_wiki_old(sujet: str) -> str:
+def outil_wiki(sujet: str) -> str:
     """
     Utilise l'API REST de Wikipédia pour obtenir l'extrait de la page.
     """
@@ -87,7 +92,7 @@ def outil_wiki_old(sujet: str) -> str:
         return f"⚠️ Erreur lors de la recherche Wikipédia ({e})."
         
 # Retourne la page Wikipédia (version française) du sujet demandé.
-def outil_wiki(sujet: str) -> str:
+def outil_wiki_full(sujet: str) -> str:
     """
     Utilise l'Action API de Wikipédia pour obtenir l'entièreté du contenu d'une page.
     """
@@ -169,6 +174,69 @@ def outil_argent(montant: float, de_monnaie: str, vers_monnaie: str) -> str:
         return f"⚠️ Erreur de conversion monétaire ({e})."
 
 
+# Effectue une recherche web via DuckDuckGo et retourne les N premiers résultats.
+def outil_duckduckgo(query: str, num_results: int = 5) -> str:
+    """
+    Utilise DuckDuckGo (ddgs) pour rechercher sur le web.
+    Retourne titres, URLs et extraits pour chaque résultat.
+    """
+    num_results = min(int(num_results), 10)
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=num_results))
+        if not results:
+            return "Aucun résultat trouvé."
+        lines = [f"**Résultats pour « {query} »**\n"]
+        for i, r in enumerate(results, 1):
+            lines.append(
+                f"{i}. **{r.get('title', 'Sans titre')}**\n"
+                f"   URL : {r.get('href', '')}\n"
+                f"   {r.get('body', '')}\n"
+            )
+        return "\n".join(lines)
+    except Exception as e:
+        return f"⚠️ Erreur lors de la recherche : {e}"
+
+
+# Télécharge et extrait le texte principal d'une page web.
+def outil_recup_page(url: str, max_chars: int = 3000) -> str:
+    """
+    Récupère une page web via requests + BeautifulSoup.
+    Supprime les balises inutiles (nav, scripts, pubs…) et nettoie le texte.
+    """
+    max_chars = min(int(max_chars), 8000)
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
+    }
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
+            tag.decompose()
+        text = soup.get_text(separator="\n", strip=True)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        if len(text) > max_chars:
+            text = text[:max_chars] + f"\n\n[… contenu tronqué à {max_chars} caractères]"
+        return text or "Page vide ou contenu non extractible."
+    except requests.exceptions.Timeout:
+        return "⚠️ Délai d'attente dépassé lors du chargement de la page."
+    except Exception as e:
+        return f"⚠️ Erreur lors du chargement de la page : {e}"
+
+
+# Retourne la date et l'heure actuelles.
+def outil_datetime() -> str:
+    """
+    Retourne la date et l'heure locales formatées en français.
+    Aucun paramètre requis.
+    """
+    return datetime.now().strftime("Date : %A %d %B %Y — Heure : %H:%M:%S")
+
+
 # Catalogue JSON (schéma pour le LLM
 CATALOGUE_OUTILS = [
     {
@@ -221,13 +289,75 @@ CATALOGUE_OUTILS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "outil_duckduckgo",
+            "description": (
+                "Effectue une recherche web via DuckDuckGo et retourne les N premiers "
+                "résultats (titre, URL, extrait). Utilise cet outil pour répondre à des "
+                "questions nécessitant des informations récentes ou factuelles."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "La requête de recherche en langage naturel.",
+                    },
+                    "num_results": {
+                        "type": "integer",
+                        "description": "Nombre de résultats à retourner (défaut 5, max 10).",
+                        "default": 5,
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "outil_recup_page",
+            "description": (
+                "Télécharge et extrait le texte principal d'une page web à partir "
+                "de son URL. Utile pour lire le contenu complet d'un article ou d'une page."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "L'URL complète de la page à récupérer.",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Nombre maximum de caractères à retourner (défaut 3000).",
+                        "default": 3000,
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "outil_datetime",
+            "description": "Retourne la date et l'heure actuelles (horloge locale du serveur).",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
 ]
 
 # Emojis d'affichage (utilisés dans l'interface web)
 ICONES_OUTILS = {
-    "outil_meteo":  "🌤️ Météo",
-    "outil_wiki":   "📖 Wikipédia",
-    "outil_argent": "💱 Change",
+    "outil_meteo":         "🌤️ Météo",
+    "outil_wiki":          "📖 Wikipédia",
+    "outil_argent":        "💱 Change",
+    "outil_duckduckgo":    "🔍 Recherche web",
+    "outil_recup_page":    "🌐 Lecture page",
+    "outil_datetime":      "🕐 Date & Heure",
 }
 
 
@@ -236,9 +366,12 @@ ICONES_OUTILS = {
 # Retourne la liste des outils activés selon la section [tools] du .conf. Permet d'activer/désactiver chaque outil sans toucher au code.
 def outils_actifs(conf: configparser.ConfigParser) -> list:
     mapping = {
-        "enable_meteo":  "outil_meteo",
-        "enable_wiki":   "outil_wiki",
-        "enable_argent": "outil_argent",
+        "enable_meteo":        "outil_meteo",
+        "enable_wiki":         "outil_wiki",
+        "enable_argent":       "outil_argent",
+        "enable_duckduckgo":   "outil_duckduckgo",
+        "enable_recup_page":   "outil_recup_page",
+        "enable_datetime":     "outil_datetime",
     }
     actifs = []
     for cle, nom in mapping.items():
@@ -255,4 +388,10 @@ def executer_outil(nom: str, args: dict) -> str:
         return outil_wiki(args["sujet"])
     elif nom == "outil_argent":
         return outil_argent(args["montant"], args["de_monnaie"], args["vers_monnaie"])
+    elif nom == "outil_duckduckgo":
+        return outil_duckduckgo(args["query"], args.get("num_results", 5))
+    elif nom == "outil_recup_page":
+        return outil_recup_page(args["url"], args.get("max_chars", 3000))
+    elif nom == "outil_datetime":
+        return outil_datetime()
     return f"⚠️ Outil inconnu : « {nom} »."
