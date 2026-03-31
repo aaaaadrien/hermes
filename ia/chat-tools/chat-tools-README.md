@@ -20,9 +20,16 @@
 ## Installation des dépendances
 
 ```bash
-pip install openai requests streamlit ddgs
+pip install openai requests streamlit ddgs bs4 pymupdf pandas openpyxl
 ```
-
+- Gestion LLM : openai
+- Requêtes LLM et externe : requests
+- Interface web : streamlit
+- Recherche web : ddgs
+- Scrap pages : bs4
+- Gestion fichier PDF : pymupdf
+- Gestion fichier : pandas
+- Gestion XLS : openpyxl
 
 ##  Lancement
 
