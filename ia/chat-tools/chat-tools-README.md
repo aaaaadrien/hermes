@@ -19,8 +19,9 @@
 
 ## Installation des dépendances
 
+Via pip (universel)
 ```bash
-pip install openai requests streamlit ddgs bs4 pymupdf pandas openpyxl
+pip install openai requests streamlit ddgs bs4 pymupdf pandas openpyxl tabulate odfpy
 ```
 - Gestion LLM : openai
 - Requêtes LLM et externe : requests
@@ -30,6 +31,7 @@ pip install openai requests streamlit ddgs bs4 pymupdf pandas openpyxl
 - Gestion fichier PDF : pymupdf
 - Gestion fichier : pandas
 - Gestion XLS : openpyxl
+- Gestion ODS/ODT : odfpy + tabulate
 
 ##  Lancement
 

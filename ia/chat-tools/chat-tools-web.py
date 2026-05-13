@@ -31,8 +31,9 @@ TYPES_TEXTE   = {".txt", ".md", ".py", ".sh", ".conf", ".ini", ".log", ".yaml", 
 EXTENSIONS_UPLOAD = [
     "txt", "md", "py", "sh", "conf", "ini", "log", "yaml", "yml",
     "json", "xml", "html", "css", "js", "ts",
-    "csv", "xlsx", "xls",
+    "csv", "xlsx", "xls", "ods",
     "pdf",
+    "odt",
     "png", "jpg", "jpeg", "gif", "webp",
 ]
 
@@ -55,13 +56,13 @@ def extraire_contenu_fichier(fichier) -> dict:
     ext  = Path(nom).suffix.lower()
     mime = fichier.type  # fourni par Streamlit
 
-    # Images : encodage base64 pour les modèles multimodaux ---
+    # Images : encodage base64 pour les modèles multimodaux
     if mime in TYPES_IMAGE or ext in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
         donnees = fichier.read()
         b64     = base64.b64encode(donnees).decode("utf-8")
         return {"type": "image", "nom": nom, "contenu": None, "b64": b64, "mime": mime}
 
-    # PDF : extraction via PyMuPDF ---
+    # PDF : extraction via PyMuPDF
     if ext == ".pdf":
         try:
             import fitz  # PyMuPDF
@@ -74,7 +75,7 @@ def extraire_contenu_fichier(fichier) -> dict:
             texte = f"⚠️ Erreur lors de l'extraction PDF : {e}"
         return {"type": "texte", "nom": nom, "contenu": texte[:LIMITE_CONTEXTE], "b64": None, "mime": None}
 
-    # CSV : a fixer
+    # CSV
     if ext == ".csv":
         try:
             import pandas as pd
@@ -87,7 +88,7 @@ def extraire_contenu_fichier(fichier) -> dict:
             texte = f"⚠️ Erreur lors de la lecture CSV : {e}"
         return {"type": "texte", "nom": nom, "contenu": texte[:LIMITE_CONTEXTE], "b64": None, "mime": None}
 
-    # Excel : a fixer
+    # Excel
     if ext in {".xlsx", ".xls"}:
         try:
             import pandas as pd
@@ -100,7 +101,39 @@ def extraire_contenu_fichier(fichier) -> dict:
             texte = f"⚠️ Erreur lors de la lecture Excel : {e}"
         return {"type": "texte", "nom": nom, "contenu": texte[:LIMITE_CONTEXTE], "b64": None, "mime": None}
 
-    # Fichiers texte brut
+    # ODS
+    if ext == ".ods":
+        try:
+            import io
+            import odf  # verifie que odfpy est disponible avant d'appeler pandas
+            import pandas as pd
+            df    = pd.read_excel(io.BytesIO(fichier.read()), engine="odf")
+            texte = df.to_markdown(index=False)
+        except ImportError as e:
+            texte = f"Bibliotheque manquante pour lire le fichier ODS : {e} (pip install pandas odfpy)"
+        except Exception as e:
+            texte = f"Erreur lors de la lecture ODS : {e}"
+        return {"type": "texte", "nom": nom, "contenu": texte[:LIMITE_CONTEXTE], "b64": None, "mime": None}
+
+    # ODT
+    if ext == ".odt":
+        try:
+            import io
+            from odf.opendocument import load as odf_load
+            from odf import teletype
+            from odf.text import P
+            doc        = odf_load(io.BytesIO(fichier.read()))
+            paragraphs = doc.body.getElementsByType(P)
+            texte      = "\n".join(teletype.extractText(p) for p in paragraphs)
+            if not texte.strip():
+                texte = "Le document ODT semble vide ou son contenu n'a pas pu etre extrait."
+        except ImportError as e:
+            texte = f"Bibliotheque manquante pour lire le fichier ODT : {e} (pip install odfpy)"
+        except Exception as e:
+            texte = f"Erreur lors de la lecture ODT : {e}"
+        return {"type": "texte", "nom": nom, "contenu": texte[:LIMITE_CONTEXTE], "b64": None, "mime": None}
+
+    # Fichiers texte brut (ou fallback)
     try:
         texte = fichier.read().decode("utf-8", errors="replace")
     except Exception as e:
@@ -191,6 +224,7 @@ with st.sidebar:
         nom   = o["function"]["name"]
         icone = ICONES_OUTILS.get(nom, "⚙️")
         st.markdown(f"{icone} `{nom}`")
+    st.divider()
 
     st.divider()
 
@@ -201,7 +235,8 @@ with st.sidebar:
         help=(
             "Texte / code / config : injection dans le contexte\n"
             "PDF : extraction du texte (PyMuPDF)\n"
-            "CSV / Excel : tableau markdown (pandas)\n"
+            "CSV / Excel / ODS : tableau markdown (pandas + odfpy)\n"
+            "ODT : extraction du texte (odfpy)\n"
             "Image : envoi base64 (modèle multimodal requis)"
         ),
     )
