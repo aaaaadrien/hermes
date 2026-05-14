@@ -21,17 +21,19 @@
 
 Via pip (universel)
 ```bash
-pip install openai requests streamlit ddgs bs4 pymupdf pandas openpyxl tabulate odfpy
+pip install openai requests streamlit ddgs bs4 pymupdf pandas openpyxl tabulate odfpy fpdf2 python-docx cachetools
 ```
 - Gestion LLM : openai
 - Requêtes LLM et externe : requests
 - Interface web : streamlit
 - Recherche web : ddgs
 - Scrap pages : bs4
-- Gestion fichier PDF : pymupdf
+- Gestion fichier PDF : pymupdf fpdf2
 - Gestion fichier : pandas
 - Gestion XLS : openpyxl
 - Gestion ODS/ODT : odfpy + tabulate
+- Gestion DOCX : python-docx
+- Divers : cachetools
 
 ##  Lancement
 

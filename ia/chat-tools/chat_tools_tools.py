@@ -237,6 +237,156 @@ def outil_datetime() -> str:
     return datetime.now().strftime("Date : %A %d %B %Y — Heure : %H:%M:%S")
 
 
+# Génère un fichier (txt, md, pdf, docx, xlsx) et retourne son contenu en base64.
+def outil_generer_fichier(contenu: str, format: str, nom_fichier: str) -> str:
+    """
+    Génère un fichier téléchargeable dans le format demandé.
+
+    Paramètres :
+      contenu      : texte à mettre dans le fichier (markdown accepté)
+      format       : extension cible — txt | md | pdf | docx | xlsx
+      nom_fichier  : nom du fichier sans extension (ex : rapport_meteo)
+    Retourne un JSON avec {b64, mime, nom, format, __fichier_genere__: true}.
+    """
+    import io, base64 as _b64, json as _json
+
+    fmt = format.lower().lstrip(".")
+
+    # Nom propre
+    if "." not in nom_fichier:
+        nom_fichier = f"{nom_fichier}.{fmt}"
+
+    try:
+        # TXT / MD
+        if fmt in ("txt", "md"):
+            data = contenu.encode("utf-8")
+            mime = "text/plain" if fmt == "txt" else "text/markdown"
+
+        # PDF (fpdf2)
+        elif fmt == "pdf":
+            from fpdf import FPDF
+            pdf = FPDF()
+            pdf.set_margins(15, 15, 15)
+            pdf.set_auto_page_break(auto=True, margin=15)
+            pdf.add_page()
+
+            for line in contenu.split("\n"):
+                stripped = line.rstrip()
+                if stripped == "":
+                    pdf.ln(4)
+                elif stripped.startswith("### "):
+                    pdf.set_font("Helvetica", "B", 12)
+                    pdf.multi_cell(0, 7, stripped[4:])
+                    pdf.set_font("Helvetica", size=11)
+                elif stripped.startswith("## "):
+                    pdf.set_font("Helvetica", "B", 14)
+                    pdf.multi_cell(0, 8, stripped[3:])
+                    pdf.set_font("Helvetica", size=11)
+                elif stripped.startswith("# "):
+                    pdf.set_font("Helvetica", "B", 16)
+                    pdf.multi_cell(0, 10, stripped[2:])
+                    pdf.set_font("Helvetica", size=11)
+                elif stripped.startswith(("- ", "* ", "• ")):
+                    pdf.set_font("Helvetica", size=11)
+                    pdf.multi_cell(0, 6, "  • " + stripped[2:])
+                else:
+                    pdf.set_font("Helvetica", size=11)
+                    pdf.multi_cell(0, 6, stripped)
+
+            data = bytes(pdf.output())
+            mime = "application/pdf"
+
+        # DOCX (python-docx)
+        elif fmt == "docx":
+            from docx import Document
+            from docx.shared import Pt
+
+            doc = Document()
+            for line in contenu.split("\n"):
+                stripped = line.rstrip()
+                if stripped.startswith("### "):
+                    doc.add_heading(stripped[4:], level=3)
+                elif stripped.startswith("## "):
+                    doc.add_heading(stripped[3:], level=2)
+                elif stripped.startswith("# "):
+                    doc.add_heading(stripped[2:], level=1)
+                elif stripped.startswith(("- ", "* ", "• ")):
+                    doc.add_paragraph(stripped[2:], style="List Bullet")
+                elif stripped == "":
+                    doc.add_paragraph("")
+                else:
+                    doc.add_paragraph(stripped)
+
+            buf = io.BytesIO()
+            doc.save(buf)
+            data = buf.getvalue()
+            mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+        # XLSX (openpyxl)
+        elif fmt == "xlsx":
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment
+
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            lines = [l for l in contenu.split("\n")]
+
+            # Détection tableau markdown (lignes avec |)
+            table_lines = [l for l in lines if "|" in l and l.strip().startswith("|")]
+
+            if table_lines:
+                row_idx = 1
+                header_done = False
+                for line in lines:
+                    if not line.strip():
+                        continue
+                    if "|" not in line:
+                        continue
+                    # Ligne séparatrice |---|---|
+                    if all(c in "-|: " for c in line):
+                        header_done = True
+                        continue
+                    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                    for col_idx, cell in enumerate(cells, 1):
+                        c = ws.cell(row=row_idx, column=col_idx, value=cell)
+                        if not header_done:  # ligne d'en-tête
+                            c.font = Font(bold=True)
+                            c.fill = PatternFill("solid", fgColor="4472C4")
+                            c.font = Font(bold=True, color="FFFFFF")
+                        c.alignment = Alignment(wrap_text=True)
+                    row_idx += 1
+                # Auto-largeur approximative
+                for col in ws.columns:
+                    max_len = max((len(str(c.value or "")) for c in col), default=10)
+                    ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 50)
+            else:
+                # Texte brut : une ligne = une cellule A?
+                for row_idx, line in enumerate(lines, 1):
+                    ws.cell(row=row_idx, column=1, value=line)
+
+            buf = io.BytesIO()
+            wb.save(buf)
+            data = buf.getvalue()
+            mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+        else:
+            return f"⚠️ Format « {format} » non supporté. Formats disponibles : txt, md, pdf, docx, xlsx"
+
+        b64 = _b64.b64encode(data).decode("utf-8")
+        return _json.dumps({
+            "__fichier_genere__": True,
+            "b64":    b64,
+            "mime":   mime,
+            "nom":    nom_fichier,
+            "format": fmt,
+        })
+
+    except ImportError as e:
+        return f"⚠️ Bibliothèque manquante pour générer le fichier .{fmt} : {e}"
+    except Exception as e:
+        return f"⚠️ Erreur lors de la génération du fichier .{fmt} : {e}"
+
+
 # Catalogue JSON (schéma pour le LLM
 CATALOGUE_OUTILS = [
     {
@@ -348,16 +498,47 @@ CATALOGUE_OUTILS = [
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "outil_generer_fichier",
+            "description": (
+                "Génère un fichier téléchargeable (txt, md, pdf, docx, xlsx) à partir d'un contenu textuel. "
+                "Utilise cet outil quand l'utilisateur demande explicitement à exporter, sauvegarder, "
+                "télécharger ou créer un fichier avec le résultat d'une réponse."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "contenu": {
+                        "type": "string",
+                        "description": "Contenu complet à mettre dans le fichier (texte brut ou markdown).",
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["txt", "md", "pdf", "docx", "xlsx"],
+                        "description": "Format du fichier à générer.",
+                    },
+                    "nom_fichier": {
+                        "type": "string",
+                        "description": "Nom du fichier sans extension (ex : rapport_meteo, synthese_2024).",
+                    },
+                },
+                "required": ["contenu", "format", "nom_fichier"],
+            },
+        },
+    },
 ]
 
 # Emojis d'affichage (utilisés dans l'interface web)
 ICONES_OUTILS = {
-    "outil_meteo":         "🌤️ Météo",
-    "outil_wiki":          "📖 Wikipédia",
-    "outil_argent":        "💱 Change",
-    "outil_duckduckgo":    "🔍 Recherche web",
-    "outil_recup_page":    "🌐 Lecture page",
-    "outil_datetime":      "🕐 Date & Heure",
+    "outil_meteo":            "🌤️ Météo",
+    "outil_wiki":             "📖 Wikipédia",
+    "outil_argent":           "💱 Change",
+    "outil_duckduckgo":       "🔍 Recherche web",
+    "outil_recup_page":       "🌐 Lecture page",
+    "outil_datetime":         "🕐 Date & Heure",
+    "outil_generer_fichier":  "💾 Génération fichier",
 }
 
 
@@ -366,12 +547,13 @@ ICONES_OUTILS = {
 # Retourne la liste des outils activés selon la section [tools] du .conf. Permet d'activer/désactiver chaque outil sans toucher au code.
 def outils_actifs(conf: configparser.ConfigParser) -> list:
     mapping = {
-        "enable_meteo":        "outil_meteo",
-        "enable_wiki":         "outil_wiki",
-        "enable_argent":       "outil_argent",
-        "enable_duckduckgo":   "outil_duckduckgo",
-        "enable_recup_page":   "outil_recup_page",
-        "enable_datetime":     "outil_datetime",
+        "enable_meteo":             "outil_meteo",
+        "enable_wiki":              "outil_wiki",
+        "enable_argent":            "outil_argent",
+        "enable_duckduckgo":        "outil_duckduckgo",
+        "enable_recup_page":        "outil_recup_page",
+        "enable_datetime":          "outil_datetime",
+        "enable_generer_fichier":   "outil_generer_fichier",
     }
     actifs = []
     for cle, nom in mapping.items():
@@ -394,4 +576,6 @@ def executer_outil(nom: str, args: dict) -> str:
         return outil_recup_page(args["url"], args.get("max_chars", 3000))
     elif nom == "outil_datetime":
         return outil_datetime()
+    elif nom == "outil_generer_fichier":
+        return outil_generer_fichier(args["contenu"], args["format"], args["nom_fichier"])
     return f"⚠️ Outil inconnu : « {nom} »."

@@ -110,9 +110,9 @@ def extraire_contenu_fichier(fichier) -> dict:
             df    = pd.read_excel(io.BytesIO(fichier.read()), engine="odf")
             texte = df.to_markdown(index=False)
         except ImportError as e:
-            texte = f"Bibliotheque manquante pour lire le fichier ODS : {e} (pip install pandas odfpy)"
+            texte = f"⚠️ Bibliothèque manquante pour lire le fichier ODS : {e} (pip install pandas odfpy)"
         except Exception as e:
-            texte = f"Erreur lors de la lecture ODS : {e}"
+            texte = f"⚠️ Erreur lors de la lecture ODS : {e}"
         return {"type": "texte", "nom": nom, "contenu": texte[:LIMITE_CONTEXTE], "b64": None, "mime": None}
 
     # ODT
@@ -126,11 +126,11 @@ def extraire_contenu_fichier(fichier) -> dict:
             paragraphs = doc.body.getElementsByType(P)
             texte      = "\n".join(teletype.extractText(p) for p in paragraphs)
             if not texte.strip():
-                texte = "Le document ODT semble vide ou son contenu n'a pas pu etre extrait."
+                texte = "⚠️ Le document ODT semble vide ou son contenu n'a pas pu être extrait."
         except ImportError as e:
-            texte = f"Bibliotheque manquante pour lire le fichier ODT : {e} (pip install odfpy)"
+            texte = f"⚠️ Bibliothèque manquante pour lire le fichier ODT : {e} (pip install odfpy)"
         except Exception as e:
-            texte = f"Erreur lors de la lecture ODT : {e}"
+            texte = f"⚠️ Erreur lors de la lecture ODT : {e}"
         return {"type": "texte", "nom": nom, "contenu": texte[:LIMITE_CONTEXTE], "b64": None, "mime": None}
 
     # Fichiers texte brut (ou fallback)
@@ -226,9 +226,9 @@ with st.sidebar:
         st.markdown(f"{icone} `{nom}`")
     st.divider()
 
-    st.divider()
-
     st.subheader("📎 Fichier joint")
+    if "uploader_key" not in st.session_state:
+        st.session_state["uploader_key"] = 0
     fichier_upload = st.file_uploader(
         "Joindre un fichier à la prochaine question",
         type=EXTENSIONS_UPLOAD,
@@ -239,6 +239,7 @@ with st.sidebar:
             "ODT : extraction du texte (odfpy)\n"
             "Image : envoi base64 (modèle multimodal requis)"
         ),
+        key=f"uploader_{st.session_state['uploader_key']}",
     )
 
     # Aperçu et mise en cache du fichier dans la session
@@ -267,10 +268,13 @@ with st.sidebar:
         st.session_state.pop("fichier_nom",  None)
     # fin fichier
 
+    st.divider()
     if st.button("🗑️ Effacer la conversation", use_container_width=True):
         st.session_state.messages = [{"role": "system", "content": sys_prompt}]
-        st.session_state.pop("fichier_info", None)
-        st.session_state.pop("fichier_nom",  None)
+        st.session_state.pop("fichier_info",    None)
+        st.session_state.pop("fichier_nom",     None)
+        st.session_state.pop("fichier_genere",  None)
+        st.session_state.pop("derniere_reponse",None)
         st.rerun()
 
 # Interface Streamlit Entete
@@ -301,6 +305,25 @@ for message in st.session_state.messages:
         else:
             st.markdown(content)
 
+# Fichier généré : bouton de téléchargement persistant dans la vue principale
+fichier_genere = st.session_state.get("fichier_genere")
+if fichier_genere:
+    import base64 as _b64
+    col_dl, col_del = st.columns([5, 1])
+    with col_dl:
+        st.download_button(
+            label=f"⬇️ Télécharger {fichier_genere['nom']}",
+            data=_b64.b64decode(fichier_genere["b64"]),
+            file_name=fichier_genere["nom"],
+            mime=fichier_genere["mime"],
+            use_container_width=True,
+            key="dl_genere",
+        )
+    with col_del:
+        if st.button("🗑️", use_container_width=True, key="del_genere", help="Effacer le fichier généré"):
+            st.session_state.pop("fichier_genere", None)
+            st.rerun()
+
 # Zone de saisie
 if prompt := st.chat_input("Posez votre question…"):
     #st.session_state.messages.append({"role": "user", "content": prompt}
@@ -312,6 +335,7 @@ if prompt := st.chat_input("Posez votre question…"):
         # Libération du fichier après envoi (une seule utilisation par défaut)
         st.session_state.pop("fichier_info", None)
         st.session_state.pop("fichier_nom",  None)
+        st.session_state["uploader_key"] = st.session_state.get("uploader_key", 0) + 1
     else:
         msg_user_llm = {"role": "user", "content": prompt}
 
@@ -354,13 +378,42 @@ if prompt := st.chat_input("Posez votre question…"):
                     st.markdown(f"**Paramètres :** `{args}`")
                     with st.spinner("Appel en cours…"):
                         res_outil = executer_outil(nom_outil, args)   # ← dispatcher partagé
-                    st.markdown(res_outil)
+
+                    # Interception de la génération de fichier
+                    res_outil_llm = res_outil
+                    if nom_outil == "outil_generer_fichier":
+                        try:
+                            parsed = json.loads(res_outil)
+                            if isinstance(parsed, dict) and parsed.get("__fichier_genere__"):
+                                st.session_state["fichier_genere"] = parsed
+                                res_outil_llm = (
+                                    f"✅ Fichier `{parsed['nom']}` généré avec succès "
+                                    f"au format {parsed['format'].upper()}. "
+                                    f"Il est disponible en téléchargement dans la vue principale."
+                                )
+                                # Bouton dans le chat immédiatement
+                                st.success(f"💾 Fichier prêt : `{parsed['nom']}`")
+                                st.download_button(
+                                    label=f"⬇️ Télécharger {parsed['nom']}",
+                                    data=base64.b64decode(parsed["b64"]),
+                                    file_name=parsed["nom"],
+                                    mime=parsed["mime"],
+                                    use_container_width=True,
+                                    key=f"dl_chat_{parsed['nom']}",
+                                )
+
+                            else:
+                                st.markdown(res_outil)
+                        except (ValueError, TypeError):
+                            st.markdown(res_outil)
+                    else:
+                        st.markdown(res_outil)
 
                 st.session_state.messages.append({
                     "role":         "tool",
                     "tool_call_id": call.id,
                     "name":         nom_outil,
-                    "content":      res_outil,
+                    "content":      res_outil_llm,
                 })
 
             # Synthese et réponse finale
@@ -378,9 +431,14 @@ if prompt := st.chat_input("Posez votre question…"):
 
             st.markdown(txt_final)
             st.session_state.messages.append({"role": "assistant", "content": txt_final})
+            st.session_state["derniere_reponse"] = txt_final
 
         # Sinon on utilise pas d'outil
         else:
             texte = msg_ia.content or "*(réponse vide)*"
             st.markdown(texte)
             st.session_state.messages.append({"role": "assistant", "content": texte})
+            st.session_state["derniere_reponse"] = texte
+
+        # Rerendu pour que les widgets hors du bloc chat (ex: bouton de téléchargement) soient visibles
+        st.rerun()
