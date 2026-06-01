@@ -31,7 +31,7 @@ pip install openai requests streamlit ddgs bs4 pymupdf pandas openpyxl tabulate 
 - Gestion fichier PDF : pymupdf fpdf2
 - Gestion fichier : pandas
 - Gestion XLS : openpyxl
-- Gestion ODS/ODT : odfpy + tabulate
+- Gestion ODS/ODT/ODP : odfpy + tabulate
 - Gestion DOCX : python-docx
 - Divers : cachetools
 

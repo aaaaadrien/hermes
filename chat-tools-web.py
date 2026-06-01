@@ -33,7 +33,7 @@ EXTENSIONS_UPLOAD = [
     "json", "xml", "html", "css", "js", "ts",
     "csv", "xlsx", "xls", "ods",
     "pdf",
-    "odt",
+    "odt", "odp",
     "png", "jpg", "jpeg", "gif", "webp",
 ]
 
@@ -131,6 +131,25 @@ def extraire_contenu_fichier(fichier) -> dict:
             texte = f"⚠️ Bibliothèque manquante pour lire le fichier ODT : {e} (pip install odfpy)"
         except Exception as e:
             texte = f"⚠️ Erreur lors de la lecture ODT : {e}"
+        return {"type": "texte", "nom": nom, "contenu": texte[:LIMITE_CONTEXTE], "b64": None, "mime": None}
+
+    # ODP
+    if ext == ".odp":
+        try:
+            import io
+            from odf.opendocument import load as odf_load
+            from odf import teletype
+            from odf.text import P
+            doc   = odf_load(io.BytesIO(fichier.read()))
+            # Extraction de tous les paragraphes (contenus dans les slides)
+            elements = doc.getElementsByType(P)
+            texte    = "\n".join(teletype.extractText(e) for e in elements)
+            if not texte.strip():
+                texte = "⚠️ Le document ODP semble vide ou son contenu n'a pas pu être extrait."
+        except ImportError as e:
+            texte = f"⚠️ Bibliothèque manquante pour lire le fichier ODP : {e} (pip install odfpy)"
+        except Exception as e:
+            texte = f"⚠️ Erreur lors de la lecture ODP : {e}"
         return {"type": "texte", "nom": nom, "contenu": texte[:LIMITE_CONTEXTE], "b64": None, "mime": None}
 
     # Fichiers texte brut (ou fallback)
@@ -236,7 +255,7 @@ with st.sidebar:
             "Texte / code / config : injection dans le contexte\n"
             "PDF : extraction du texte (PyMuPDF)\n"
             "CSV / Excel / ODS : tableau markdown (pandas + odfpy)\n"
-            "ODT : extraction du texte (odfpy)\n"
+            "ODT / ODP : extraction du texte (odfpy)\n"
             "Image : envoi base64 (modèle multimodal requis)"
         ),
         key=f"uploader_{st.session_state['uploader_key']}",
