@@ -443,19 +443,38 @@ if prompt := st.chat_input("Posez votre question…"):
                         messages=st.session_state.messages,
                         max_tokens=max_tokens,
                         temperature=temperature,
+                        stream=True,
                     )
                     txt_final = final.choices[0].message.content
                 except Exception as e:
                     txt_final = f"Erreur lors de la synthèse : {e}"
+                    st.error(txt_final)
+                    st.stop()
 
-            st.markdown(txt_final)
+            #st.markdown(txt_final)
+            txt_final = st.write_stream(final)
             st.session_state.messages.append({"role": "assistant", "content": txt_final})
             st.session_state["derniere_reponse"] = txt_final
 
         # Sinon on utilise pas d'outil
         else:
-            texte = msg_ia.content or "*(réponse vide)*"
-            st.markdown(texte)
+            #texte = msg_ia.content or "*(réponse vide)*"
+            #st.markdown(texte)
+            # Activer le mode streaming
+            try:
+                flux = client.chat.completions.create(
+                    model=model,
+                    messages=st.session_state.messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stream=True,
+                )
+                texte = st.write_stream(flux)
+                
+            except Exception as e:
+                st.error(f"Erreur pendant le streaming : {e}")
+                texte = "*(erreur de génération)*"
+
             st.session_state.messages.append({"role": "assistant", "content": texte})
             st.session_state["derniere_reponse"] = texte
 
