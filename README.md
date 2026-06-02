@@ -1,4 +1,4 @@
-# Tests de Chat LLM avec outils (testé avec llama.cpp) 
+# Chatbot perso avec gestion d'outils (testé avec llama.cpp) 
 
 - Agent conversationnel en Python connecté à un modèle LLM tournant en local via **llama.cpp**.
 - Disponible en deux interfaces : **terminal (CLI)** et **web (Streamlit)**.
@@ -6,9 +6,9 @@
 
 ## Fichiers
 
-- chat-tools.conf : Configuration partagée
-- chat-tools-cli.py : Interface en ligne de commande
-- chat-tools-web.py : Interface web Streamlit
+- hermes.conf : Configuration partagée
+- hermes-cli.py : Interface en ligne de commande
+- hermes-web.py : Interface web Streamlit
 
 
 ## Prérequis
@@ -40,18 +40,18 @@ pip install openai requests streamlit ddgs bs4 pymupdf pandas openpyxl tabulate 
 ### Interface CLI (terminal)
 
 ```bash
-python chat-tools-cli.py
+python hermes-cli.py
 ```
 
 ### Interface Web (Streamlit)
 
 ```bash
-streamlit run chat-tools-web.py
+streamlit run hermes-web.py
 ```
 
 Si streamlit est introuvable (pas dans le $PATH) : 
 ```bash
-~/.local/bin/streamlit run chat-tools-web.py
+~/.local/bin/streamlit run hermes-web.py
 ```
 
 Si besoin on peut éditer le fichier suivant pour configurer streamlit :

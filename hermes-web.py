@@ -1,13 +1,13 @@
 """
-chat-tools-web.py
+hermes-web.py
 =================
 Agent conversationnel en web utilisant un LLM local.
 Interface web pour l'agent conversationnel, construite avec Streamlit.
-La configuration est lue depuis chat-tools.conf.
-Les outils sont définis dans chat_tools_tools.py.
+La configuration est lue depuis hermes-web.conf.
+Les outils sont définis dans hermes_tools.py.
 
 Lancement :
-  streamlit run chat-tools-web.py
+  streamlit run hermes-web.py
 """
 
 import json
@@ -21,7 +21,7 @@ from openai import OpenAI
 import base64
 
 # Module partagé contenant outils + catalogue + dispatcher
-from chat_tools_tools import outils_actifs, executer_outil, ICONES_OUTILS
+from hermes_tools import outils_actifs, executer_outil, ICONES_OUTILS
 
 # Gestion de l'upload de fichiers
 TYPES_IMAGE   = {"image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"}
@@ -190,9 +190,9 @@ def construire_message_avec_fichier(info: dict, prompt: str) -> dict:
 
 # Chargemen config
 @st.cache_resource
-def charger_config(chemin: str = "chat-tools.conf") -> configparser.ConfigParser:
+def charger_config(chemin: str = "hermes.conf") -> configparser.ConfigParser:
     """
-    Lit le fichier chat-tools.conf une seule fois (mis en cache par Streamlit).
+    Lit le fichier hermes.conf une seule fois (mis en cache par Streamlit).
     Affiche une erreur fatale si le fichier est introuvable.
     """
     conf = configparser.ConfigParser()
@@ -218,9 +218,9 @@ def creer_client(base_url: str, api_key: str) -> OpenAI:
 # Interface Streamlit HEAD
 conf = charger_config()
 
-page_title  = conf.get("web",   "page_title",  fallback="Chat LLM Linuxtricks")
-page_icon   = conf.get("web",   "page_icon",   fallback="🤖")
-header      = conf.get("web",   "header",      fallback="Chat LLM Linuxtricks")
+page_title  = conf.get("web",   "page_title",  fallback="Hermes chatbot by Linuxtricks.fr")
+page_icon   = conf.get("web",   "page_icon",   fallback="📜")
+header      = conf.get("web",   "header",      fallback="Hermes chatbot by Linuxtricks.fr")
 sys_prompt  = conf.get("agent", "system_prompt")
 model       = conf.get("llm",   "model")
 max_tokens  = conf.getint("llm",   "max_tokens",   fallback=2048)

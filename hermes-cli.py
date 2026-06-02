@@ -1,12 +1,12 @@
 """
-chat-tools-cli.py
+hermes-cli.py
 =================
 Agent conversationnel en ligne de commande utilisant un LLM local.
-La configuration est lue depuis chat-tools.conf.
-Les outils sont définis dans chat_tools_tools.py.
+La configuration est lue depuis hermes.conf.
+Les outils sont définis dans hermes_tools.py.
 
 Lancement :
-  python chat-tools-cli.py
+  python hermes-cli.py
 """
 
 import json
@@ -17,7 +17,7 @@ from pathlib import Path
 from openai import OpenAI
 
 # Module partagé contenant outils + catalogue + dispatcher
-from chat_tools_tools import outils_actifs, executer_outil, ICONES_OUTILS
+from hermes_tools import outils_actifs, executer_outil, ICONES_OUTILS
 
 
 # Couleurs pour la console
@@ -33,7 +33,7 @@ class C:
 
 
 # Chargemen config
-def charger_config(chemin: str = "chat-tools.conf") -> configparser.ConfigParser:
+def charger_config(chemin: str = "hermes.conf") -> configparser.ConfigParser:
     conf = configparser.ConfigParser()
     path = Path(chemin)
     if not path.exists():
@@ -64,7 +64,7 @@ def main():
     sys_prompt  = conf.get("agent", "system_prompt")
     banner      = conf.get("cli",   "banner")
     user_pfx    = conf.get("cli",   "user_prefix",  fallback="Vous")
-    agent_pfx   = conf.get("cli",   "agent_prefix", fallback="Agent")
+    agent_pfx   = conf.get("cli",   "agent_prefix", fallback="Hermes")
 
     outils = outils_actifs(conf)   # liste filtrée selon [tools] dans le .conf
 

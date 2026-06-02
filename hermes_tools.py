@@ -1,12 +1,12 @@
 """
-chat_tools_tools.py
+hermes_tools.py
 ===================
 Module partagé contenant les outils (météo, wiki, change).
-Importé par chat-tools-cli.py et chat-tools-web.py.
+Importé par hermes-cli.py et hermes-web.py.
 Important : pas de - mais des _ dans le fichier pour importer le module !
 
 Utilisation :
-    from chat_tools_tools import CATALOGUE_OUTILS, outils_actifs, executer_outil
+    from hermes_tools import CATALOGUE_OUTILS, outils_actifs, executer_outil
 """
 
 import configparser

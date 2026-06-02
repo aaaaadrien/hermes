@@ -1,3 +1,3 @@
 #! /bin/bash
 
-/home/adrien/.local/bin/streamlit run chat-tools-web.py
+/home/adrien/.local/bin/streamlit run hermes-web.py
