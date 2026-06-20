@@ -199,7 +199,7 @@ def outil_duckduckgo(query: str, num_results: int = 5) -> str:
 
 
 # Télécharge et extrait le texte principal d'une page web.
-def outil_recup_page(url: str, max_chars: int = 3000) -> str:
+def outil_recup_page(url: str, max_chars: int = 1024000) -> str:
     """
     Récupère une page web via requests + BeautifulSoup.
     Supprime les balises inutiles (nav, scripts, pubs…) et nettoie le texte.
@@ -226,6 +226,63 @@ def outil_recup_page(url: str, max_chars: int = 3000) -> str:
         return "⚠️ Délai d'attente dépassé lors du chargement de la page."
     except Exception as e:
         return f"⚠️ Erreur lors du chargement de la page : {e}"
+
+
+# Récupère la transcription texte d'une vidéo YouTube via youtube-transcript.ai.
+def outil_youtube_transcript(url_ou_id: str, max_chars: int = 1024000) -> str:
+    """
+    Récupère la transcription d'une vidéo YouTube.
+    Accepte une URL YouTube complète (youtube.com, youtu.be, /shorts/, /embed/)
+    ou directement un identifiant vidéo (11 caractères, ex : NQyhvjtIaQw).
+
+    Paramètres :
+      url_ou_id : URL YouTube ou identifiant vidéo (ex : NQyhvjtIaQw)
+      max_chars : nombre maximum de caractères retournés (défaut 8000, max 15000)
+    """
+    # Extraction de l'identifiant depuis différents formats d'URL YouTube
+    video_id = url_ou_id.strip()
+    if not re.match(r'^[A-Za-z0-9_-]{11}$', video_id):
+        match = re.search(
+            r'(?:v=|youtu\.be/|/embed/|/shorts/|/live/)([A-Za-z0-9_-]{11})',
+            video_id
+        )
+        if not match:
+            return f"⚠️ Impossible d'extraire l'identifiant YouTube depuis : {url_ou_id}"
+        video_id = match.group(1)
+
+    max_chars = min(int(max_chars), 1024000)
+
+    try:
+        transcript_url = f"https://youtube-transcript.ai/transcript/{video_id}.txt"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            )
+        }
+        resp = requests.get(transcript_url, headers=headers, timeout=15)
+        resp.raise_for_status()
+
+        texte = resp.text.strip()
+        if not texte:
+            return f"⚠️ Aucune transcription disponible pour la vidéo « {video_id} »."
+
+        if len(texte) > max_chars:
+            texte = texte[:max_chars] + f"\n\n[… transcription tronquée à {max_chars} caractères]"
+
+        return f"📺 Transcription YouTube (ID : {video_id}) :\n\n{texte}"
+
+    except requests.exceptions.Timeout:
+        return "⚠️ Délai d'attente dépassé lors de la récupération de la transcription."
+    except requests.exceptions.HTTPError as e:
+        if resp.status_code == 404:
+            return (
+                f"⚠️ Aucune transcription trouvée pour « {video_id} » "
+                f"(vidéo introuvable ou sous-titres désactivés)."
+            )
+        return f"⚠️ Erreur HTTP lors de la récupération de la transcription : {e}"
+    except Exception as e:
+        return f"⚠️ Erreur lors de la récupération de la transcription YouTube ({e})."
 
 
 # Retourne la date et l'heure actuelles.
@@ -493,6 +550,35 @@ CATALOGUE_OUTILS = [
     {
         "type": "function",
         "function": {
+            "name": "outil_youtube_transcript",
+            "description": (
+                "Récupère la transcription textuelle complète d'une vidéo YouTube. "
+                "Utilise cet outil quand l'utilisateur fournit un lien YouTube ou un identifiant "
+                "vidéo et souhaite lire, résumer, traduire ou analyser son contenu."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url_ou_id": {
+                        "type": "string",
+                        "description": (
+                            "URL complète YouTube (youtube.com/watch?v=…, youtu.be/…, /shorts/…) "
+                            "ou identifiant vidéo seul (11 caractères, ex : NQyhvjtIaQw)."
+                        ),
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Nombre maximum de caractères à retourner (défaut 8000, max 15000).",
+                        "default": 8000,
+                    },
+                },
+                "required": ["url_ou_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "outil_datetime",
             "description": "Retourne la date et l'heure actuelles (horloge locale du serveur).",
             "parameters": {"type": "object", "properties": {}, "required": []},
@@ -537,6 +623,7 @@ ICONES_OUTILS = {
     "outil_argent":           "💱 Change",
     "outil_duckduckgo":       "🔍 Recherche web",
     "outil_recup_page":       "🌐 Lecture page",
+    "outil_youtube_transcript": "📺 Transcript YouTube",
     "outil_datetime":         "🕐 Date & Heure",
     "outil_generer_fichier":  "💾 Génération fichier",
 }
@@ -552,6 +639,7 @@ def outils_actifs(conf: configparser.ConfigParser) -> list:
         "enable_argent":            "outil_argent",
         "enable_duckduckgo":        "outil_duckduckgo",
         "enable_recup_page":        "outil_recup_page",
+        "enable_youtube_transcript":"outil_youtube_transcript",
         "enable_datetime":          "outil_datetime",
         "enable_generer_fichier":   "outil_generer_fichier",
     }
@@ -571,9 +659,11 @@ def executer_outil(nom: str, args: dict) -> str:
     elif nom == "outil_argent":
         return outil_argent(args["montant"], args["de_monnaie"], args["vers_monnaie"])
     elif nom == "outil_duckduckgo":
-        return outil_duckduckgo(args["query"], args.get("num_results", 5))
+        return outil_duckduckgo(args["query"], args.get("num_results", 10))
     elif nom == "outil_recup_page":
-        return outil_recup_page(args["url"], args.get("max_chars", 3000))
+        return outil_recup_page(args["url"], args.get("max_chars", 1024000))
+    elif nom == "outil_youtube_transcript":
+        return outil_youtube_transcript(args["url_ou_id"], args.get("max_chars", 1024000))
     elif nom == "outil_datetime":
         return outil_datetime()
     elif nom == "outil_generer_fichier":

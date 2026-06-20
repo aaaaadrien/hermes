@@ -443,7 +443,7 @@ if prompt := st.chat_input("Posez votre question…"):
                         messages=st.session_state.messages,
                         max_tokens=max_tokens,
                         temperature=temperature,
-                        stream=True,
+                        # stream=True, # TODO BUG STREAM
                     )
                     txt_final = final.choices[0].message.content
                 except Exception as e:
@@ -451,8 +451,8 @@ if prompt := st.chat_input("Posez votre question…"):
                     st.error(txt_final)
                     st.stop()
 
-            #st.markdown(txt_final)
-            txt_final = st.write_stream(final)
+            st.markdown(txt_final)
+            #txt_final = st.write_stream(final)  # TODO BUG STREAM
             st.session_state.messages.append({"role": "assistant", "content": txt_final})
             st.session_state["derniere_reponse"] = txt_final
 
