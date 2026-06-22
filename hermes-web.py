@@ -23,6 +23,12 @@ import base64
 # Module partagé contenant outils + catalogue + dispatcher
 from hermes_tools import outils_actifs, executer_outil, ICONES_OUTILS
 
+# Module de gestion des contextes système (Amphores)
+from hermes_amphores import (
+    charger_amphores, sauvegarder_amphores, amphore_par_id,
+    creer_amphore, mettre_a_jour_amphore, supprimer_amphore, ID_DEFAUT,
+)
+
 # Gestion de l'upload de fichiers
 TYPES_IMAGE   = {"image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"}
 TYPES_TEXTE   = {".txt", ".md", ".py", ".sh", ".conf", ".ini", ".log", ".yaml", ".yml",
@@ -38,7 +44,7 @@ EXTENSIONS_UPLOAD = [
 ]
 
 # Limite de caractères injectés dans le contexte pour les fichiers texte
-LIMITE_CONTEXTE = 12000
+LIMITE_CONTEXTE = 65536
 
 
 def extraire_contenu_fichier(fichier) -> dict:
@@ -188,7 +194,7 @@ def construire_message_avec_fichier(info: dict, prompt: str) -> dict:
         return {"role": "user", "content": contenu_injecte}
 
 
-# Chargemen config
+# Chargement config
 @st.cache_resource
 def charger_config(chemin: str = "hermes.conf") -> configparser.ConfigParser:
     """
@@ -234,17 +240,115 @@ st.set_page_config(page_title=page_title, page_icon=page_icon, layout="wide")
 outils = outils_actifs(conf)   # liste filtrée selon [tools] dans le .conf
 
 with st.sidebar:
-    st.header("Informations")
-    st.markdown(f"**Modèle :** `{model}`")
-    st.markdown(f"**Température :** `{temperature}`")
-    st.markdown(f"**Max tokens :** `{max_tokens}`")
-    st.markdown(f"**Outils actifs :** {len(outils)}")
-    for o in outils:
-        nom   = o["function"]["name"]
-        icone = ICONES_OUTILS.get(nom, "⚙️")
-        st.markdown(f"{icone} `{nom}`")
+
+    # Contextes système (Amphores)
+    st.subheader("🏺 Contextes (Amphores)")
+
+    # Initialisation au premier chargement de la session
+    if "amphores" not in st.session_state:
+        st.session_state["amphores"] = charger_amphores(sys_prompt)
+    if "amphore_actif_id" not in st.session_state:
+        st.session_state["amphore_actif_id"] = st.session_state["amphores"][0]["id"]
+
+    amphores_list = st.session_state["amphores"]
+    amphore_actif = amphore_par_id(amphores_list, st.session_state["amphore_actif_id"]) or amphores_list[0]
+
+    # Sélecteur de contexte
+    idx_actif = next((i for i, g in enumerate(amphores_list) if g["id"] == amphore_actif["id"]), 0)
+    idx_sel = st.selectbox(
+        "Contexte",
+        options=range(len(amphores_list)),
+        index=idx_actif,
+        format_func=lambda i: amphores_list[i]["nom"],
+        label_visibility="collapsed",
+        key="sel_amphore",
+    )
+    amphore_sel = amphores_list[idx_sel]
+
+    # Description du contexte sélectionné
+    if amphore_sel.get("description"):
+        st.caption(f"*{amphore_sel['description']}*")
+
+    # Bouton d'activation si le contexte sélectionné diffère du contexte actif
+    if amphore_sel["id"] != amphore_actif["id"]:
+        reinit = st.checkbox("Réinitialiser la conversation", value=True, key="chk_reinit_amphore")
+        if st.button("✅ Activer cette amphore", use_container_width=True, key="btn_activer_amphore"):
+            st.session_state["amphore_actif_id"] = amphore_sel["id"]
+            if reinit:
+                st.session_state.messages = [{"role": "system", "content": amphore_sel["system_prompt"]}]
+                for k in ("fichier_genere", "derniere_reponse", "fichier_info", "fichier_nom"):
+                    st.session_state.pop(k, None)
+            else:
+                # Injection silencieuse dans le message système existant
+                if st.session_state.messages and st.session_state.messages[0]["role"] == "system":
+                    st.session_state.messages[0]["content"] = amphore_sel["system_prompt"]
+            st.rerun()
+    else:
+        st.caption("✅ *Amphore active*")
+
+    # Créer un nouveau contexte
+    with st.expander("➕ Nouvelle amphore"):
+        with st.form("form_nouveau_amphore", clear_on_submit=True):
+            f_nom    = st.text_input("Nom *", placeholder="Ex : Expert Python")
+            f_desc   = st.text_input("Description", placeholder="Optionnel")
+            f_prompt = st.text_area(
+                "Prompt système *", height=140,
+                placeholder="Tu es un expert Python spécialisé en optimisation de code",
+            )
+            if st.form_submit_button("💾 Créer", use_container_width=True):
+                if f_nom.strip() and f_prompt.strip():
+                    nouveau = creer_amphore(f_nom, f_prompt, f_desc)
+                    amphores_list.append(nouveau)
+                    sauvegarder_amphores(amphores_list)
+                    st.session_state["amphores"] = amphores_list
+                    st.success(f"✅ Amphore « {f_nom} » créé !")
+                    st.rerun()
+                else:
+                    st.warning("Le nom et le prompt système sont obligatoires.")
+
+    # Modifier le contexte actif
+    with st.expander("✏️ Modifier l'amphore active"):
+        with st.form("form_edit_amphore"):
+            e_nom    = st.text_input("Nom",         value=amphore_actif["nom"])
+            e_desc   = st.text_input("Description", value=amphore_actif.get("description", ""))
+            e_prompt = st.text_area(
+                "Prompt système", value=amphore_actif["system_prompt"], height=140,
+            )
+            if st.form_submit_button("💾 Sauvegarder", use_container_width=True):
+                updated = mettre_a_jour_amphore(
+                    amphores_list, amphore_actif["id"],
+                    nom=e_nom, description=e_desc, system_prompt=e_prompt,
+                )
+                sauvegarder_amphores(updated)
+                st.session_state["amphores"] = updated
+                # Répercussion immédiate sur le message système en cours
+                if st.session_state.messages and st.session_state.messages[0]["role"] == "system":
+                    st.session_state.messages[0]["content"] = e_prompt
+                st.success("✅ Amphore mise à jour !")
+                st.rerun()
+
+    # Supprimer le contexte actif (protégé pour "Par défaut")
+    if amphore_actif["id"] != ID_DEFAUT:
+        del_confirm = st.checkbox("Je confirme la suppression", key="chk_del_amphore")
+        if st.button(
+            "🗑️ Supprimer cette amphore",
+            use_container_width=True,
+            key="btn_del_amphore",
+            disabled=not del_confirm,
+        ):
+            amphores_list = supprimer_amphore(amphores_list, amphore_actif["id"])
+            sauvegarder_amphores(amphores_list)
+            st.session_state["amphores"]         = amphores_list
+            st.session_state["amphore_actif_id"] = amphores_list[0]["id"]
+            if st.session_state.messages and st.session_state.messages[0]["role"] == "system":
+                st.session_state.messages[0]["content"] = amphores_list[0]["system_prompt"]
+            st.rerun()
+
+    # fin Contextes (Amphores)
+    
     st.divider()
 
+    # Fichiers à joindre
     st.subheader("📎 Fichier joint")
     if "uploader_key" not in st.session_state:
         st.session_state["uploader_key"] = 0
@@ -287,14 +391,33 @@ with st.sidebar:
         st.session_state.pop("fichier_nom",  None)
     # fin fichier
 
+
+    # Effacer la conversation 
     st.divider()
     if st.button("🗑️ Effacer la conversation", use_container_width=True):
-        st.session_state.messages = [{"role": "system", "content": sys_prompt}]
+        # st.session_state.messages = [{"role": "system", "content": sys_prompt}]
+        # Repart avec le prompt du contexte actif (pas celui du .conf)
+        prompt_actif = amphore_actif.get("system_prompt", sys_prompt)
+        st.session_state.messages = [{"role": "system", "content": prompt_actif}]
         st.session_state.pop("fichier_info",    None)
         st.session_state.pop("fichier_nom",     None)
         st.session_state.pop("fichier_genere",  None)
         st.session_state.pop("derniere_reponse",None)
         st.rerun()
+        
+    # Infos
+    st.divider()
+    st.header("Informations")
+    st.markdown(f"**Modèle :** `{model}`")
+    st.markdown(f"**Température :** `{temperature}`")
+    st.markdown(f"**Max tokens :** `{max_tokens}`")
+    st.markdown(f"**Outils actifs :** {len(outils)}")
+    for o in outils:
+        nom   = o["function"]["name"]
+        icone = ICONES_OUTILS.get(nom, "⚙️")
+        st.markdown(f"{icone} `{nom}`")
+        
+
 
 # Interface Streamlit Entete
 st.title(header)
