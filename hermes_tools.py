@@ -204,7 +204,7 @@ def outil_recup_page(url: str, max_chars: int = 1024000) -> str:
     Récupère une page web via requests + BeautifulSoup.
     Supprime les balises inutiles (nav, scripts, pubs…) et nettoie le texte.
     """
-    max_chars = min(int(max_chars), 8000)
+    max_chars = min(int(max_chars), 1024000)
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -237,7 +237,7 @@ def outil_youtube_transcript(url_ou_id: str, max_chars: int = 1024000) -> str:
 
     Paramètres :
       url_ou_id : URL YouTube ou identifiant vidéo (ex : NQyhvjtIaQw)
-      max_chars : nombre maximum de caractères retournés (défaut 8000, max 15000)
+      max_chars : nombre maximum de caractères retournés (défaut 1024000, max 1024000)
     """
     # Extraction de l'identifiant depuis différents formats d'URL YouTube
     video_id = url_ou_id.strip()
@@ -539,8 +539,8 @@ CATALOGUE_OUTILS = [
                     },
                     "max_chars": {
                         "type": "integer",
-                        "description": "Nombre maximum de caractères à retourner (défaut 3000).",
-                        "default": 3000,
+                        "description": "Nombre maximum de caractères à retourner (défaut 1024000).",
+                        "default": 1024000,
                     },
                 },
                 "required": ["url"],
@@ -568,8 +568,8 @@ CATALOGUE_OUTILS = [
                     },
                     "max_chars": {
                         "type": "integer",
-                        "description": "Nombre maximum de caractères à retourner (défaut 8000, max 15000).",
-                        "default": 8000,
+                        "description": "Nombre maximum de caractères à retourner (défaut 1024000, max 1024000).",
+                        "default": 1024000,
                     },
                 },
                 "required": ["url_ou_id"],
