@@ -23,6 +23,10 @@ import base64
 # Module partagé contenant outils + catalogue + dispatcher
 from hermes_tools import outils_actifs, executer_outil, ICONES_OUTILS
 
+# Module outil_transcrire_audio importé à part et appelé directement (pas via executer_outil)
+# il a besoin des bytes bruts du fichier joint sinon ça marche pas (a améilorer plus tard)
+from hermes_tools import outil_transcrire_audio
+
 # Module de gestion des contextes système (Amphores)
 from hermes_amphores import (
     charger_amphores, sauvegarder_amphores, amphore_par_id,
@@ -33,6 +37,9 @@ from hermes_amphores import (
 TYPES_IMAGE   = {"image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"}
 TYPES_TEXTE   = {".txt", ".md", ".py", ".sh", ".conf", ".ini", ".log", ".yaml", ".yml",
                  ".json", ".xml", ".html", ".css", ".js", ".ts", ".csv"}
+TYPES_AUDIO   = {".wav", ".aiff", ".flac", ".ogg", ".mp3", ".m4a"}
+TYPES_VIDEO   = {".mp4", ".mkv", ".mov", ".avi"}
+TYPES_AUDIO_VIDEO = TYPES_AUDIO | TYPES_VIDEO
 
 EXTENSIONS_UPLOAD = [
     "txt", "md", "py", "sh", "conf", "ini", "log", "yaml", "yml",
@@ -41,21 +48,23 @@ EXTENSIONS_UPLOAD = [
     "pdf",
     "odt", "odp",
     "png", "jpg", "jpeg", "gif", "webp",
+    ".wav", ".aiff", ".flac", ".ogg", ".mp3", ".m4a",
+    ".mp4", ".mkv", ".mov", ".avi",
 ]
 
 # Limite de caractères injectés dans le contexte pour les fichiers texte
 LIMITE_CONTEXTE = 65536
 
-
-def extraire_contenu_fichier(fichier) -> dict:
+def extraire_contenu_fichier(fichier, conf: configparser.ConfigParser) -> dict:
     """
     Analyse le fichier uploadé et retourne un dict :
       {
-        "type":    "image" | "texte",
+        "type":    "image" | "texte" | "audio",
         "nom":     str,
-        "contenu": str          # texte extrait
+        "contenu": str | None   # texte extrait (None pour audio/image)
         "b64":     str | None   # base64 pour les images
-        "mime":    str | None   # MIME type pour les images
+        "mime":    str | None   # MIME type pour les images/audio
+        "donnees": bytes | None # contenu binaire brut (audio/vidéo uniquement)
       }
     """
     nom  = fichier.name
@@ -68,6 +77,11 @@ def extraire_contenu_fichier(fichier) -> dict:
         b64     = base64.b64encode(donnees).decode("utf-8")
         return {"type": "image", "nom": nom, "contenu": None, "b64": b64, "mime": mime}
 
+    # Audio / vidéo : bytes bruts conservés et transcription déclenchée que si llm décide d'appeler outil_transcrire_audio
+    if ext in TYPES_AUDIO_VIDEO or (mime and (mime.startswith("audio/") or mime.startswith("video/"))):
+        donnees = fichier.getvalue() if hasattr(fichier, "getvalue") else fichier.read()
+        return {"type": "audio", "nom": nom, "contenu": None, "b64": None, "mime": mime, "donnees": donnees}
+        
     # PDF : extraction via PyMuPDF
     if ext == ".pdf":
         try:
@@ -169,8 +183,9 @@ def extraire_contenu_fichier(fichier) -> dict:
 def construire_message_avec_fichier(info: dict, prompt: str) -> dict:
     """
     Construit le message user à envoyer au LLM en fonction du type de fichier.
-    - Image  → format multimodal OpenAI (base64)
-    - Texte  → injection dans le contenu texte
+    - Image  : format multimodal OpenAI (base64)
+    - Audio  : note indiquant un fichier joint (LLM doit appeler "outil_transcrire_audio" si besoin texte dicté)
+    - Texte  : injection dans le contenu texte
     """
     if info["type"] == "image":
         return {
@@ -185,6 +200,15 @@ def construire_message_avec_fichier(info: dict, prompt: str) -> dict:
                 {"type": "text", "text": prompt},
             ],
         }
+    # TODO : y a peut être mieux pour ça
+    elif info["type"] == "audio":
+        contenu_injecte = (
+            f"[Un fichier audio/vidéo est joint à ce message : `{info['nom']}`. "
+            f"Utilise l'outil de transcription (outil_transcrire_audio) pour en obtenir "
+            f"le texte dicté si c'est nécessaire pour répondre à la question.]\n\n"
+            f"Question : {prompt}"
+        )
+        return {"role": "user", "content": contenu_injecte}
     else:
         contenu_injecte = (
             f"Voici le contenu du fichier `{info['nom']}` :\n\n"
@@ -360,7 +384,8 @@ with st.sidebar:
             "PDF : extraction du texte (PyMuPDF)\n"
             "CSV / Excel / ODS : tableau markdown (pandas + odfpy)\n"
             "ODT / ODP : extraction du texte (odfpy)\n"
-            "Image : envoi base64 (modèle multimodal requis)"
+            "Image : envoi base64 (modèle multimodal requis)\n"
+            "Audio / vidéo : transcrit uniquement si le LLM appelle l'outil outil_transcrire_audio"
         ),
         key=f"uploader_{st.session_state['uploader_key']}",
     )
@@ -369,14 +394,17 @@ with st.sidebar:
     if fichier_upload is not None:
         # Mémorisation uniquement si c'est un nouveau fichier
         if st.session_state.get("fichier_nom") != fichier_upload.name:
-            with st.spinner("Lecture du fichier…"):
-                info = extraire_contenu_fichier(fichier_upload)
+            with st.spinner("Lecture du fichier..."):
+                info = extraire_contenu_fichier(fichier_upload, conf)
             st.session_state["fichier_info"] = info
             st.session_state["fichier_nom"]  = fichier_upload.name
 
         info_cache = st.session_state.get("fichier_info", {})
         if info_cache.get("type") == "image":
             st.success(f"🖼️ Image prête : `{info_cache['nom']}`")
+        elif info_cache.get("type") == "audio":
+            st.success(f"🎙️ Audio/vidéo joint : `{info_cache['nom']}`")
+            st.caption("Sera transcrit uniquement si nécessaire pour répondre à la question.")
         else:
             nb_chars = len(info_cache.get("contenu") or "")
             st.success(f"📄 `{info_cache['nom']}` — {nb_chars} caractères extraits")
@@ -467,10 +495,12 @@ if fichier_genere:
             st.rerun()
 
 # Zone de saisie
-if prompt := st.chat_input("Posez votre question…"):
+if prompt := st.chat_input("Posez votre question..."):
     #st.session_state.messages.append({"role": "user", "content": prompt}
     # Construction du message user (avec ou sans fichier)
     info_fichier = st.session_state.get("fichier_info")
+    # Bytes conservés pour appel à outil_transcrire_audio
+    audio_actif = info_fichier if (info_fichier and info_fichier.get("type") == "audio") else None
 
     if info_fichier:
         msg_user_llm = construire_message_avec_fichier(info_fichier, prompt)
@@ -486,7 +516,13 @@ if prompt := st.chat_input("Posez votre question…"):
     with st.chat_message("user"):
         st.markdown(prompt)
         if info_fichier:
-            label_type = "🖼️ image" if info_fichier["type"] == "image" else "📄 fichier texte"
+            #label_type = "🖼️ image" if info_fichier["type"] == "image" else "📄 fichier texte"
+            if info_fichier["type"] == "image":
+                label_type = "🖼️ image"
+            elif info_fichier["type"] == "audio":
+                label_type = "🎙️ audio/vidéo"
+            else:
+                label_type = "📄 fichier texte"
             st.caption(f"{label_type} joint : `{info_fichier['nom']}`")
 
     with st.chat_message("assistant"):
@@ -518,8 +554,18 @@ if prompt := st.chat_input("Posez votre question…"):
 
                 with st.expander(f"{label} — `{nom_outil}`", expanded=False):
                     st.markdown(f"**Paramètres :** `{args}`")
-                    with st.spinner("Appel en cours…"):
-                        res_outil = executer_outil(nom_outil, args)   # ← dispatcher partagé
+                    with st.spinner("Appel en cours..."):
+                        #res_outil = executer_outil(nom_outil, args)   # dispatcher partagé
+                        if nom_outil == "outil_transcrire_audio":
+                            # Cas spécial : nécessite bytes réels du fichier joint que le dispatcher générique ne peut pas transporter.
+                            if audio_actif:
+                                res_outil = outil_transcrire_audio(
+                                    audio_actif["donnees"], audio_actif["nom"], conf
+                                )
+                            else:
+                                res_outil = "⚠️ Aucun fichier audio/vidéo n'est joint à ce message."
+                        else:
+                            res_outil = executer_outil(nom_outil, args)   # dispatcher partagé
 
                     # Interception de la génération de fichier
                     res_outil_llm = res_outil
@@ -559,7 +605,7 @@ if prompt := st.chat_input("Posez votre question…"):
                 })
 
             # Synthese et réponse finale
-            with st.spinner("Rédaction de la réponse…"):
+            with st.spinner("Rédaction de la réponse..."):
                 try:
                     final     = client.chat.completions.create(
                         model=model,

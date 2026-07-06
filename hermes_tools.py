@@ -11,6 +11,11 @@ Utilisation :
 
 import configparser
 import re
+import mimetypes
+import os
+import subprocess
+import tempfile
+from pathlib import Path
 from datetime import datetime
 
 import requests
@@ -283,6 +288,122 @@ def outil_youtube_transcript(url_ou_id: str, max_chars: int = 1024000) -> str:
         return f"⚠️ Erreur HTTP lors de la récupération de la transcription : {e}"
     except Exception as e:
         return f"⚠️ Erreur lors de la récupération de la transcription YouTube ({e})."
+
+# Extensions vidéo pour conversion en audio (via ffmpeg systeme) avant envoi à whisper.cpp
+_EXTENSIONS_VIDEO = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
+
+
+def _extraire_audio_ffmpeg(donnees: bytes, nom_fichier: str) -> bytes:
+    """
+    Extrait la piste audio d'un fichier vidéo et la convertit en WAV mono 16 kHz
+    (format standard attendu par whisper.cpp) via ffmpeg.
+    Nécessite que le binaire `ffmpeg` soit installé et accessible dans le PATH.
+    """
+    suffixe_in = Path(nom_fichier).suffix or ".mp4"
+    with tempfile.NamedTemporaryFile(suffix=suffixe_in, delete=False) as f_in:
+        f_in.write(donnees)
+        chemin_in = f_in.name
+    chemin_out = chemin_in + ".wav"
+
+    try:
+        resultat = subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", chemin_in,
+                "-vn",              # pas de flux vidéo
+                "-ac", "1",         # mono car plus leger
+                "-ar", "16000",     # 16 kHz
+                "-f", "wav",
+                chemin_out,
+            ],
+            capture_output=True, timeout=300,
+        )
+        if resultat.returncode != 0:
+            erreur = resultat.stderr.decode("utf-8", errors="replace")[-500:]
+            raise RuntimeError(f"ffmpeg a échoué : {erreur}")
+        with open(chemin_out, "rb") as f_out:
+            return f_out.read()
+    finally:
+        for chemin in (chemin_in, chemin_out):
+            try:
+                os.remove(chemin)
+            except OSError:
+                pass
+
+
+# Transcrit un fichier audio/vidéo en texte via un serveur whisper.cpp local.
+def outil_transcrire_audio(donnees: bytes, nom_fichier: str, conf: configparser.ConfigParser) -> str:
+    """
+    Envoie un fichier audio (ou la piste audio extraite d'une vidéo) à un serveur
+    whisper.cpp local, en utilisant son API native (/inference).
+    
+    Si le fichier est une vidéo (mp4, mkv, mov, avi, webm), sa piste audio est d'abord
+    extraite et convertie en WAV mono 16 kHz via ffmpeg (whisper.cpp n'acceptant pas
+    de façon fiable les conteneurs vidéo bruts, d'où l'erreur 400 côté serveur).
+
+    Paramètres :
+      donnees     : contenu binaire brut du fichier (bytes)
+      nom_fichier : nom original du fichier (utilisé pour le type MIME et le nom envoyé)
+      conf        : configuration (section [whisper] de hermes.conf)
+
+    Configuration attendue dans hermes.conf :
+        [whisper]
+        base_url          = http://localhost:8081   # racine du serveur whisper.cpp
+        endpoint          = /inference              # route native whisper.cpp
+        response_format   = json                    # json | text | srt | vtt
+        language          = fr                      # optionnel, vide = auto-détection
+    """
+    try:
+        # Extraction piste audio en amont (via ffmpeg système)
+        if Path(nom_fichier).suffix.lower() in _EXTENSIONS_VIDEO:
+            try:
+                donnees = _extraire_audio_ffmpeg(donnees, nom_fichier)
+                nom_fichier = Path(nom_fichier).stem + ".wav"
+            except FileNotFoundError:
+                return (
+                    "⚠️ ffmpeg n'est pas installé (ou introuvable dans le PATH). "
+                    "Installez-le pour transcrire des fichiers vidéo."
+                )
+            except Exception as e:
+                return f"⚠️ Erreur lors de l'extraction audio de la vidéo (ffmpeg) : {e}"
+
+        base_url = conf.get("whisper", "base_url", fallback="http://localhost:8081").rstrip("/")
+        endpoint = conf.get("whisper", "endpoint", fallback="/inference")
+        fmt      = conf.get("whisper", "response_format", fallback="json").strip() or "json"
+        langue   = conf.get("whisper", "language", fallback="").strip()
+
+        url          = f"{base_url}{endpoint}"
+        content_type = mimetypes.guess_type(nom_fichier)[0] or "application/octet-stream"
+
+        fichiers = {"file": (nom_fichier, donnees, content_type)}
+        champs   = {"response_format": fmt}
+        if langue:
+            champs["language"] = langue
+
+        reponse = requests.post(url, files=fichiers, data=champs, timeout=300)
+        reponse.raise_for_status()
+
+        if fmt == "json":
+            try:
+                payload = reponse.json()
+                texte = payload.get("text") or payload.get("transcription") or ""
+            except ValueError:
+                texte = reponse.text
+        else:
+            texte = reponse.text
+
+        texte = texte.strip()
+        return texte if texte else "⚠️ Transcription vide (aucun texte détecté dans l'audio)."
+
+    except requests.exceptions.ConnectionError:
+        return "⚠️ Impossible de contacter le serveur whisper.cpp "
+    except requests.exceptions.Timeout:
+        return "⚠️ Délai d'attente dépassé lors de la transcription audio."
+    except requests.exceptions.HTTPError as e:
+        return f"⚠️ Erreur HTTP du serveur whisper.cpp : {e}"
+    except Exception as e:
+        return f"⚠️ Erreur lors de la transcription audio : {e}"
+
+
 
 
 # Retourne la date et l'heure actuelles.
@@ -614,18 +735,33 @@ CATALOGUE_OUTILS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "outil_transcrire_audio",
+            "description": (
+                "Transcrit en texte le fichier audio ou vidéo joint au message courant "
+                "(via un serveur whisper.cpp local). À utiliser uniquement lorsque l'utilisateur "
+                "a joint un fichier audio/vidéo et souhaite en connaître le contenu dicté "
+                "(résumé, réponse à une question sur l'enregistrement, etc.). "
+                "Ne fonctionne que s'il y a effectivement un fichier audio/vidéo joint."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
 ]
 
 # Emojis d'affichage (utilisés dans l'interface web)
 ICONES_OUTILS = {
-    "outil_meteo":            "🌤️ Météo",
-    "outil_wiki":             "📖 Wikipédia",
-    "outil_argent":           "💱 Change",
-    "outil_duckduckgo":       "🔍 Recherche web",
-    "outil_recup_page":       "🌐 Lecture page",
+    "outil_meteo":              "🌤️ Météo",
+    "outil_wiki":               "📖 Wikipédia",
+    "outil_argent":             "💱 Change",
+    "outil_duckduckgo":         "🔍 Recherche web",
+    "outil_recup_page":         "🌐 Lecture page",
     "outil_youtube_transcript": "📺 Transcript YouTube",
-    "outil_datetime":         "🕐 Date & Heure",
-    "outil_generer_fichier":  "💾 Génération fichier",
+    "outil_datetime":           "🕐 Date & Heure",
+    "outil_generer_fichier":    "💾 Génération fichier",
+    "outil_transcrire_audio":   "🎙️ Transcription audio/vidéo",
 }
 
 
@@ -642,6 +778,7 @@ def outils_actifs(conf: configparser.ConfigParser) -> list:
         "enable_youtube_transcript":"outil_youtube_transcript",
         "enable_datetime":          "outil_datetime",
         "enable_generer_fichier":   "outil_generer_fichier",
+        "enable_transcrire_audio":  "outil_transcrire_audio",
     }
     actifs = []
     for cle, nom in mapping.items():
@@ -668,4 +805,7 @@ def executer_outil(nom: str, args: dict) -> str:
         return outil_datetime()
     elif nom == "outil_generer_fichier":
         return outil_generer_fichier(args["contenu"], args["format"], args["nom_fichier"])
+    elif nom == "outil_transcrire_audio":
+        # Intercepté en amiont par hermes-web, ce cas est déclencé si jamais on utilise l'outil depuis la CLI
+        return "⚠️ Aucun fichier audio/vidéo joint : cet outil nécessite un fichier attaché depuis l'interface web."
     return f"⚠️ Outil inconnu : « {nom} »."

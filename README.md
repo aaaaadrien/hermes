@@ -15,7 +15,7 @@
 
 - Python **3.9+**
 - Un serveur d'inférence (exemple llama.cpp) mais pas forcément sur la même machine
-
+- Un serveur whisper.cpp (optionnel) pour retranscrire de l'audio ou une vidéo pour analyse mais pas forcément sur la même machine
 
 ## Installation des dépendances
 
@@ -34,6 +34,27 @@ pip install openai requests streamlit ddgs bs4 pymupdf pandas openpyxl tabulate 
 - Gestion ODS/ODT/ODP : odfpy + tabulate
 - Gestion DOCX : python-docx
 - Divers : cachetools
+
+## Upload de fichier audio / vidéo (transcription à la demande)
+
+L'interface web permet de joindre un fichier audio ou vidéo (mp3, wav, ogg, flac, mp4, mkv, mov, avi, ...)
+Contrairement aux autres fichiers, il **n'est pas transcrit immédiatement à l'upload** : le fichier est simplement joint au message, et c'est le LLM qui décide de déclencher la transcription via l'outil outil_transcrire_audio.
+
+Cet outil est activable/désactivable comme les autres, si vous n'avez pas de whisper.cpp, dans `hermes.conf` :
+```ini
+[tools]
+enable_transcrire_audio = true
+```
+
+Pour les fichiers **vidéo**, la piste audio est d'abord extraite et convertie en WAV via **ffmpeg** avant l'envoi à whisper.cpp
+De fait, `ffmpeg` doit donc être installé et accessible dans le `PATH`.
+
+Dans le cadre de RHEL et clones, ffmpeg est dispo dans RPM Fusion Free : 
+```bash
+sudo dnf install --nogpgcheck https://dl.fedoraproject.org/pub/epel/epel-release-latest-$(rpm -E %rhel).noarch.rpm
+sudo dnf install --nogpgcheck https://mirrors.rpmfusion.org/free/el/rpmfusion-free-release-$(rpm -E %rhel).noarch.rpm
+```
+
 
 ##  Lancement
 
