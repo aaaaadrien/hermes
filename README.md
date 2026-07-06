@@ -54,17 +54,31 @@ Si streamlit est introuvable (pas dans le $PATH) :
 ~/.local/bin/streamlit run hermes-web.py
 ```
 
+### Configuration de Streamlit
+
 Si besoin on peut éditer le fichier suivant pour configurer streamlit :
 ```
-vim .streamlit/config.toml
+vim ~/.streamlit/config.toml
 ```
 
-Avec dedans :
+La config est donnée ici : https://docs.streamlit.io/develop/api-reference/configuration/config.toml
+
+Voici un exemple :
 ```
-# COnfig : https://docs.streamlit.io/develop/api-reference/configuration/config.toml
 [browser]
 serverAddress = "0.0.0.0"
 #serverAddress = "localhost"
 gatherUsageStats = false
 serverPort = 8501
+
+[server]
+maxUploadSize = 1500
 ```
+
+Dans la section **browser** :
+- **serverAddress** permet de changer l'adresse d'écoute, 0.0.0.0 pour toutes les adresses, localhost par défaut
+- **serverPort** permet de changer le port d'écoute, 8501 par défaut
+- **gatherUsageStats** permet de désactiver l'envoi de statistiques à Streamlit
+
+Dans la section **server** :
+- **maxUploadSize** permet de changer la taille max des fichiers uploadés en MB, par défaut 200
