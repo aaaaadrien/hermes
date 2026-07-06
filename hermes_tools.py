@@ -315,7 +315,7 @@ def _extraire_audio_ffmpeg(donnees: bytes, nom_fichier: str) -> bytes:
                 "-f", "wav",
                 chemin_out,
             ],
-            capture_output=True, timeout=300,
+            capture_output=True, timeout=900,
         )
         if resultat.returncode != 0:
             erreur = resultat.stderr.decode("utf-8", errors="replace")[-500:]
@@ -379,7 +379,7 @@ def outil_transcrire_audio(donnees: bytes, nom_fichier: str, conf: configparser.
         if langue:
             champs["language"] = langue
 
-        reponse = requests.post(url, files=fichiers, data=champs, timeout=300)
+        reponse = requests.post(url, files=fichiers, data=champs, timeout=900)
         reponse.raise_for_status()
 
         if fmt == "json":
