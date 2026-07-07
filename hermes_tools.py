@@ -312,6 +312,7 @@ def _extraire_audio_ffmpeg(donnees: bytes, nom_fichier: str) -> bytes:
                 "-vn",              # pas de flux vidéo
                 "-ac", "1",         # mono car plus leger
                 "-ar", "16000",     # 16 kHz
+                "-af", "silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-40dB", # Supprimer les blancs
                 "-f", "wav",
                 chemin_out,
             ],
