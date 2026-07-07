@@ -560,7 +560,9 @@ if prompt := st.chat_input("Posez votre question..."):
                             # Cas spécial : nécessite bytes réels du fichier joint que le dispatcher générique ne peut pas transporter.
                             if audio_actif:
                                 res_outil = outil_transcrire_audio(
-                                    audio_actif["donnees"], audio_actif["nom"], conf
+                                    audio_actif["donnees"], audio_actif["nom"], conf,
+                                    ignorer_debut_secondes=args.get("ignorer_debut_secondes", 0) or 0,
+                                    ignorer_fin_secondes=args.get("ignorer_fin_secondes", 0) or 0,
                                 )
                             else:
                                 res_outil = "⚠️ Aucun fichier audio/vidéo n'est joint à ce message."

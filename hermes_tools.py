@@ -10,6 +10,7 @@ Utilisation :
 """
 
 import configparser
+import math
 import re
 import mimetypes
 import os
@@ -293,10 +294,17 @@ def outil_youtube_transcript(url_ou_id: str, max_chars: int = 1024000) -> str:
 _EXTENSIONS_VIDEO = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
 
 
-def _extraire_audio_ffmpeg(donnees: bytes, nom_fichier: str) -> bytes:
+def _extraire_audio_ffmpeg(donnees: bytes, nom_fichier: str, ignorer_debut_secondes: float = 0,
+                            ignorer_fin_secondes: float = 0) -> bytes:
     """
     Extrait la piste audio d'un fichier vidéo et la convertit en WAV mono 16 kHz
     (format standard attendu par whisper.cpp) via ffmpeg.
+    Note : on supprime les silences et accélère un peu l'audio (plus rapide à traiter)
+
+    ignorer_debut_secondes : si > 0, coupe ce nombre de secondes au début du fichier
+                             (pour pas traiter une intro de live)
+    ignorer_fin_secondes   : si > 0, coupe ce nombre de secondes à la fin du fichier
+
     Nécessite que le binaire `ffmpeg` soit installé et accessible dans le PATH.
     """
     suffixe_in = Path(nom_fichier).suffix or ".mp4"
@@ -306,18 +314,23 @@ def _extraire_audio_ffmpeg(donnees: bytes, nom_fichier: str) -> bytes:
     chemin_out = chemin_in + ".wav"
 
     try:
-        resultat = subprocess.run(
-            [
-                "ffmpeg", "-y", "-i", chemin_in,
-                "-vn",              # pas de flux vidéo
-                "-ac", "1",         # mono car plus leger
-                "-ar", "16000",     # 16 kHz
-                "-af", "silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-40dB,atempo=1.2", # Supprimer les blancs et accélérer pour avoir moins long à traiter
-                "-f", "wav",
-                chemin_out,
-            ],
-            capture_output=True, timeout=900,
-        )
+        commande = ["ffmpeg", "-y"]
+        if ignorer_debut_secondes > 0:
+            commande += ["-ss", str(ignorer_debut_secondes)]
+        commande += ["-i", chemin_in]
+        if ignorer_fin_secondes > 0:
+            duree_totale = _duree_fichier_secondes(chemin_in)
+            duree_utile = max(duree_totale - ignorer_debut_secondes - ignorer_fin_secondes, 1)
+            commande += ["-t", str(duree_utile)]
+        commande += [
+            "-vn",              # pas de flux vidéo
+            "-ac", "1",         # mono car plus leger
+            "-ar", "16000",     # 16 kHz
+            "-af", "silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-40dB,atempo=1.2", # Supprimer les blancs et accélérer pour avoir moins long à traiter
+            "-f", "wav",
+            chemin_out,
+        ]
+        resultat = subprocess.run(commande, capture_output=True, timeout=900)
         if resultat.returncode != 0:
             erreur = resultat.stderr.decode("utf-8", errors="replace")[-500:]
             raise RuntimeError(f"ffmpeg a échoué : {erreur}")
@@ -331,8 +344,27 @@ def _extraire_audio_ffmpeg(donnees: bytes, nom_fichier: str) -> bytes:
                 pass
 
 
+def _duree_fichier_secondes(chemin: str) -> float:
+    """
+    Renvoie la durée (en secondes) d'un fichier audio/vidéo via ffprobe.
+    
+    ffprobe est dans le paquet ffmpeg
+    """
+    resultat = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            chemin,
+        ],
+        capture_output=True, timeout=60,
+    )
+    return float(resultat.stdout.decode("utf-8", errors="replace").strip() or 0.0)
+
+
 # Transcrit un fichier audio/vidéo en texte via un serveur whisper.cpp local.
-def outil_transcrire_audio(donnees: bytes, nom_fichier: str, conf: configparser.ConfigParser) -> str:
+def outil_transcrire_audio(donnees: bytes, nom_fichier: str, conf: configparser.ConfigParser,
+                            ignorer_debut_secondes: float = 0, ignorer_fin_secondes: float = 0) -> str:
     """
     Envoie un fichier audio (ou la piste audio extraite d'une vidéo) à un serveur
     whisper.cpp local, en utilisant son API native (/inference).
@@ -342,9 +374,11 @@ def outil_transcrire_audio(donnees: bytes, nom_fichier: str, conf: configparser.
     de façon fiable les conteneurs vidéo bruts, d'où l'erreur 400 côté serveur).
 
     Paramètres :
-      donnees     : contenu binaire brut du fichier (bytes)
-      nom_fichier : nom original du fichier (utilisé pour le type MIME et le nom envoyé)
-      conf        : configuration (section [whisper] de hermes.conf)
+      donnees                  : contenu binaire brut du fichier (bytes)
+      nom_fichier              : nom original du fichier (utilisé pour le type MIME et le nom envoyé)
+      conf                     : configuration (section [whisper] de hermes.conf)
+      ignorer_debut_secondes   : si > 0, coupe ce nombre de secondes au début avant transcription
+      ignorer_fin_secondes     : si > 0, coupe ce nombre de secondes à la fin avant transcription
 
     Configuration attendue dans hermes.conf :
         [whisper]
@@ -354,10 +388,15 @@ def outil_transcrire_audio(donnees: bytes, nom_fichier: str, conf: configparser.
         language          = fr                      # optionnel, vide = auto-détection
     """
     try:
-        # Extraction piste audio en amont (via ffmpeg système)
-        if Path(nom_fichier).suffix.lower() in _EXTENSIONS_VIDEO:
+        # Extraction piste audio en amont (via ffmpeg système) avec découpe optionnelle début/fin
+        if (Path(nom_fichier).suffix.lower() in _EXTENSIONS_VIDEO
+                or ignorer_debut_secondes > 0 or ignorer_fin_secondes > 0):
             try:
-                donnees = _extraire_audio_ffmpeg(donnees, nom_fichier)
+                donnees = _extraire_audio_ffmpeg(
+                    donnees, nom_fichier,
+                    ignorer_debut_secondes=ignorer_debut_secondes,
+                    ignorer_fin_secondes=ignorer_fin_secondes,
+                )
                 nom_fichier = Path(nom_fichier).stem + ".wav"
             except FileNotFoundError:
                 return (
@@ -365,7 +404,7 @@ def outil_transcrire_audio(donnees: bytes, nom_fichier: str, conf: configparser.
                     "Installez-le pour transcrire des fichiers vidéo."
                 )
             except Exception as e:
-                return f"⚠️ Erreur lors de l'extraction audio de la vidéo (ffmpeg) : {e}"
+                return f"⚠️ Erreur lors du traitement audio (ffmpeg) : {e}"
 
         base_url = conf.get("whisper", "base_url", fallback="http://localhost:8081").rstrip("/")
         endpoint = conf.get("whisper", "endpoint", fallback="/inference")
@@ -380,7 +419,7 @@ def outil_transcrire_audio(donnees: bytes, nom_fichier: str, conf: configparser.
         if langue:
             champs["language"] = langue
 
-        reponse = requests.post(url, files=fichiers, data=champs, timeout=900)
+        reponse = requests.post(url, files=fichiers, data=champs, timeout=1200)
         reponse.raise_for_status()
 
         if fmt == "json":
@@ -745,9 +784,32 @@ CATALOGUE_OUTILS = [
                 "(via un serveur whisper.cpp local). À utiliser uniquement lorsque l'utilisateur "
                 "a joint un fichier audio/vidéo et souhaite en connaître le contenu dicté "
                 "(résumé, réponse à une question sur l'enregistrement, etc.). "
-                "Ne fonctionne que s'il y a effectivement un fichier audio/vidéo joint."
+                "Ne fonctionne que s'il y a effectivement un fichier audio/vidéo joint. "
+                "Si l'utilisateur demande de retirer une partie du début ou de la fin avec par exemple "
+                "« enlève les 5 premières minutes », « saute les 2 premières minutes », "
+                "« coupe la dernière minute »), convertis sa demande en secondes et renseigne "
+                "ignorer_debut_secondes et/ou ignorer_fin_secondes en conséquence."
             ),
-            "parameters": {"type": "object", "properties": {}, "required": []},
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ignorer_debut_secondes": {
+                        "type": "number",
+                        "description": (
+                            "Nombre de secondes à couper au début du fichier avant transcription "
+                            "(0 par défaut). Ex : l'utilisateur dit « enlève les 5 premières minutes » -> 300."
+                        ),
+                    },
+                    "ignorer_fin_secondes": {
+                        "type": "number",
+                        "description": (
+                            "Nombre de secondes à couper à la fin du fichier avant transcription "
+                            "(0 par défaut). Ex : l'utilisateur dit « enlève la dernière minute » -> 60."
+                        ),
+                    },
+                },
+                "required": [],
+            },
         },
     },
 ]
