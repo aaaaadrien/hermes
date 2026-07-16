@@ -36,7 +36,7 @@ def _amphore_defaut(sys_prompt: str) -> dict:
     return {
         "id":            ID_DEFAUT,
         "nom":           "Par défaut",
-        "description":   "Contexte général (issu de hermes.conf)",
+        "description":   "",
         "system_prompt": sys_prompt,
     }
 

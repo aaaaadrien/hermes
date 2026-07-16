@@ -255,6 +255,7 @@ sys_prompt  = conf.get("agent", "system_prompt")
 model       = conf.get("llm",   "model")
 max_tokens  = conf.getint("llm",   "max_tokens",   fallback=2048)
 temperature = conf.getfloat("llm", "temperature",  fallback=0.7)
+editamphores = conf.getboolean("amphores", "editamphores", fallback=True)
 
 #st.set_page_config(page_title=page_title, page_icon=page_icon, layout="centered")
 st.set_page_config(page_title=page_title, page_icon=page_icon, layout="wide")
@@ -266,7 +267,7 @@ outils = outils_actifs(conf)   # liste filtrée selon [tools] dans le .conf
 with st.sidebar:
 
     # Contextes système (Amphores)
-    st.subheader("🏺 Contextes (Amphores)")
+    st.subheader("🏺 Amphores")
 
     # Initialisation au premier chargement de la session
     if "amphores" not in st.session_state:
@@ -276,97 +277,107 @@ with st.sidebar:
 
     amphores_list = st.session_state["amphores"]
     amphore_actif = amphore_par_id(amphores_list, st.session_state["amphore_actif_id"]) or amphores_list[0]
-
-    # Sélecteur de contexte
     idx_actif = next((i for i, g in enumerate(amphores_list) if g["id"] == amphore_actif["id"]), 0)
-    idx_sel = st.selectbox(
-        "Contexte",
+
+    def _appliquer_amphore_selectionnee():
+        """Callback : applique immédiatement l'amphore choisie dans le menu déroulant
+        (sans réinitialiser la conversation — seul le bouton 'Effacer la conversation' le fait)."""
+        liste = st.session_state["amphores"]
+        idx = st.session_state["sel_amphore"]
+        sel = liste[idx]
+        st.session_state["amphore_actif_id"] = sel["id"]
+        if st.session_state.get("messages") and st.session_state.messages[0]["role"] == "system":
+            st.session_state.messages[0]["content"] = sel["system_prompt"]
+
+    # Sélecteur de contexte, appliqué immédiatement via callback
+    st.selectbox(
+        "Contexte actif",
         options=range(len(amphores_list)),
         index=idx_actif,
         format_func=lambda i: amphores_list[i]["nom"],
-        label_visibility="collapsed",
+        label_visibility="visible",
         key="sel_amphore",
+        help="🏺 Les amphores sont des contextes personnalisés (prompt système) qui changent le comportement de l'IA.",
+        on_change=_appliquer_amphore_selectionnee,
     )
-    amphore_sel = amphores_list[idx_sel]
+    if amphore_actif.get("description"):
+        st.caption(f"*{amphore_actif['description']}*")
 
-    # Description du contexte sélectionné
-    if amphore_sel.get("description"):
-        st.caption(f"*{amphore_sel['description']}*")
+    # Boutons de gestion (masqués si editamphores = no dans hermes.conf)
+    if editamphores:
 
-    # Bouton d'activation si le contexte sélectionné diffère du contexte actif
-    if amphore_sel["id"] != amphore_actif["id"]:
-        reinit = st.checkbox("Réinitialiser la conversation", value=True, key="chk_reinit_amphore")
-        if st.button("✅ Activer cette amphore", use_container_width=True, key="btn_activer_amphore"):
-            st.session_state["amphore_actif_id"] = amphore_sel["id"]
-            if reinit:
-                st.session_state.messages = [{"role": "system", "content": amphore_sel["system_prompt"]}]
-                for k in ("fichier_genere", "derniere_reponse", "fichier_info", "fichier_nom"):
-                    st.session_state.pop(k, None)
-            else:
-                # Injection silencieuse dans le message système existant
-                if st.session_state.messages and st.session_state.messages[0]["role"] == "system":
-                    st.session_state.messages[0]["content"] = amphore_sel["system_prompt"]
-            st.rerun()
-    else:
-        st.caption("✅ *Amphore active*")
-
-    # Créer un nouveau contexte
-    with st.expander("➕ Nouvelle amphore"):
-        with st.form("form_nouveau_amphore", clear_on_submit=True):
-            f_nom    = st.text_input("Nom *", placeholder="Ex : Expert Python")
-            f_desc   = st.text_input("Description", placeholder="Optionnel")
+        @st.dialog("➕ Nouvelle amphore")
+        def _dialog_nouvelle_amphore():
+            f_nom = st.text_input("Nom *", placeholder="Ex : Expert Python")
+            f_desc = st.text_input("Description", placeholder="Optionnel")
             f_prompt = st.text_area(
-                "Prompt système *", height=140,
+                "Prompt système *", height=160,
                 placeholder="Tu es un expert Python spécialisé en optimisation de code",
             )
-            if st.form_submit_button("💾 Créer", use_container_width=True):
+            c1, c2 = st.columns(2)
+            if c1.button("💾 Créer", use_container_width=True):
                 if f_nom.strip() and f_prompt.strip():
                     nouveau = creer_amphore(f_nom, f_prompt, f_desc)
-                    amphores_list.append(nouveau)
-                    sauvegarder_amphores(amphores_list)
-                    st.session_state["amphores"] = amphores_list
-                    st.success(f"✅ Amphore « {f_nom} » créé !")
+                    liste = st.session_state["amphores"] + [nouveau]
+                    sauvegarder_amphores(liste)
+                    st.session_state["amphores"] = liste
+                    st.session_state["amphore_actif_id"] = nouveau["id"]
+                    if st.session_state.get("messages") and st.session_state.messages[0]["role"] == "system":
+                        st.session_state.messages[0]["content"] = nouveau["system_prompt"]
+                    st.success(f"✅ Amphore « {f_nom} » créée !")
                     st.rerun()
                 else:
                     st.warning("Le nom et le prompt système sont obligatoires.")
+            if c2.button("Annuler", use_container_width=True):
+                st.rerun()
 
-    # Modifier le contexte actif
-    with st.expander("✏️ Modifier l'amphore active"):
-        with st.form("form_edit_amphore"):
-            e_nom    = st.text_input("Nom",         value=amphore_actif["nom"])
-            e_desc   = st.text_input("Description", value=amphore_actif.get("description", ""))
-            e_prompt = st.text_area(
-                "Prompt système", value=amphore_actif["system_prompt"], height=140,
-            )
-            if st.form_submit_button("💾 Sauvegarder", use_container_width=True):
+        @st.dialog("✏️ Modifier l'amphore")
+        def _dialog_editer_amphore(amphore):
+            est_defaut = amphore["id"] == ID_DEFAUT
+            if est_defaut:
+                st.caption("🔒 Le contexte « Par défaut » ne peut pas être modifié (issu de hermes.conf).")
+            e_nom = st.text_input("Nom", value=amphore["nom"], disabled=est_defaut)
+            e_desc = st.text_input("Description", value=amphore.get("description", ""), disabled=est_defaut)
+            e_prompt = st.text_area("Prompt système", value=amphore["system_prompt"], height=160, disabled=est_defaut)
+
+            c1, c2 = st.columns(2)
+            if c1.button("💾 Sauvegarder", use_container_width=True, disabled=est_defaut):
                 updated = mettre_a_jour_amphore(
-                    amphores_list, amphore_actif["id"],
+                    st.session_state["amphores"], amphore["id"],
                     nom=e_nom, description=e_desc, system_prompt=e_prompt,
                 )
                 sauvegarder_amphores(updated)
                 st.session_state["amphores"] = updated
-                # Répercussion immédiate sur le message système en cours
-                if st.session_state.messages and st.session_state.messages[0]["role"] == "system":
+                if (st.session_state.get("messages") and st.session_state.messages[0]["role"] == "system"
+                        and st.session_state["amphore_actif_id"] == amphore["id"]):
                     st.session_state.messages[0]["content"] = e_prompt
                 st.success("✅ Amphore mise à jour !")
                 st.rerun()
+            if c2.button("Fermer", use_container_width=True):
+                st.rerun()
 
-    # Supprimer le contexte actif (protégé pour "Par défaut")
-    if amphore_actif["id"] != ID_DEFAUT:
-        del_confirm = st.checkbox("Je confirme la suppression", key="chk_del_amphore")
-        if st.button(
-            "🗑️ Supprimer cette amphore",
-            use_container_width=True,
-            key="btn_del_amphore",
-            disabled=not del_confirm,
+            if not est_defaut:
+                st.divider()
+                del_confirm = st.checkbox("Je confirme la suppression", key="chk_del_amphore")
+                if st.button("🗑️ Supprimer cette amphore", use_container_width=True, disabled=not del_confirm):
+                    liste = supprimer_amphore(st.session_state["amphores"], amphore["id"])
+                    sauvegarder_amphores(liste)
+                    st.session_state["amphores"] = liste
+                    # On revient toujours sur le contexte "Par défaut" après suppression
+                    defaut = amphore_par_id(liste, ID_DEFAUT) or liste[0]
+                    st.session_state["amphore_actif_id"] = defaut["id"]
+                    if st.session_state.get("messages") and st.session_state.messages[0]["role"] == "system":
+                        st.session_state.messages[0]["content"] = defaut["system_prompt"]
+                    st.rerun()
+
+        col_amph_1, col_amph_2 = st.columns(2)
+        if col_amph_1.button("➕ Nouvelle", use_container_width=True, key="btn_nouvelle_amphore"):
+            _dialog_nouvelle_amphore()
+        if col_amph_2.button(
+            "✏️ Éditer", use_container_width=True, key="btn_editer_amphore",
+            disabled=(amphore_actif["id"] == ID_DEFAUT),
         ):
-            amphores_list = supprimer_amphore(amphores_list, amphore_actif["id"])
-            sauvegarder_amphores(amphores_list)
-            st.session_state["amphores"]         = amphores_list
-            st.session_state["amphore_actif_id"] = amphores_list[0]["id"]
-            if st.session_state.messages and st.session_state.messages[0]["role"] == "system":
-                st.session_state.messages[0]["content"] = amphores_list[0]["system_prompt"]
-            st.rerun()
+            _dialog_editer_amphore(amphore_actif)
 
     # fin Contextes (Amphores)
     
