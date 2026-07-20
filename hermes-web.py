@@ -12,6 +12,7 @@ Lancement :
 
 import json
 import configparser
+import time
 from pathlib import Path
 
 import requests
@@ -357,7 +358,8 @@ with st.sidebar:
                 st.rerun()
 
             if not est_defaut:
-                st.divider()
+                #st.divider()
+                st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
                 del_confirm = st.checkbox("Je confirme la suppression", key="chk_del_amphore")
                 if st.button("🗑️ Supprimer cette amphore", use_container_width=True, disabled=not del_confirm):
                     liste = supprimer_amphore(st.session_state["amphores"], amphore["id"])
@@ -381,7 +383,8 @@ with st.sidebar:
 
     # fin Contextes (Amphores)
     
-    st.divider()
+    #st.divider()
+    st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
 
     # Fichiers à joindre
     st.subheader("📎 Fichier joint")
@@ -432,7 +435,8 @@ with st.sidebar:
 
 
     # Effacer la conversation 
-    st.divider()
+    #st.divider()
+    st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
     if st.button("🗑️ Effacer la conversation", use_container_width=True):
         # st.session_state.messages = [{"role": "system", "content": sys_prompt}]
         # Repart avec le prompt du contexte actif (pas celui du .conf)
@@ -442,10 +446,18 @@ with st.sidebar:
         st.session_state.pop("fichier_nom",     None)
         st.session_state.pop("fichier_genere",  None)
         st.session_state.pop("derniere_reponse",None)
+        st.session_state["temps_reponse"] = None
         st.rerun()
+
+    # Temps de réponse (infos)
+    #st.divider()
+    st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+    tr = st.session_state.get("temps_reponse")
+    st.markdown(f"**Temps de réponse :** {f'{int(tr)}s' if tr is not None else 'None'}")
         
     # Infos
-    st.divider()
+    #st.divider()
+    st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
     st.header("Informations")
     st.markdown(f"**Modèle :** `{model}`")
     st.markdown(f"**Température :** `{temperature}`")
@@ -455,7 +467,6 @@ with st.sidebar:
         nom   = o["function"]["name"]
         icone = ICONES_OUTILS.get(nom, "⚙️")
         st.markdown(f"{icone} `{nom}`")
-        
 
 
 # Interface Streamlit Entete
@@ -507,6 +518,7 @@ if fichier_genere:
 
 # Zone de saisie
 if prompt := st.chat_input("Posez votre question..."):
+    _t0_question = time.time()
     #st.session_state.messages.append({"role": "user", "content": prompt}
     # Construction du message user (avec ou sans fichier)
     info_fichier = st.session_state.get("fichier_info")
@@ -659,6 +671,9 @@ if prompt := st.chat_input("Posez votre question..."):
 
             st.session_state.messages.append({"role": "assistant", "content": texte})
             st.session_state["derniere_reponse"] = texte
+
+        # Temps de réponse (du clic "Envoyer" à la réponse finale affichée)
+        st.session_state["temps_reponse"] = time.time() - _t0_question
 
         # Rerendu pour que les widgets hors du bloc chat (ex: bouton de téléchargement) soient visibles
         st.rerun()
