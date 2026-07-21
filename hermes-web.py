@@ -256,7 +256,8 @@ sys_prompt  = conf.get("agent", "system_prompt")
 model       = conf.get("llm",   "model")
 max_tokens  = conf.getint("llm",   "max_tokens",   fallback=2048)
 temperature = conf.getfloat("llm", "temperature",  fallback=0.7)
-editamphores = conf.getboolean("amphores", "editamphores", fallback=True)
+editpasswd = conf.get("amphores", "editpasswd", fallback="").strip()
+editamphores = not bool(editpasswd)  # sans mot de passe défini : édition affichée par défaut
 
 #st.set_page_config(page_title=page_title, page_icon=page_icon, layout="centered")
 st.set_page_config(page_title=page_title, page_icon=page_icon, layout="wide")
@@ -269,6 +270,11 @@ with st.sidebar:
 
     # Contextes système (Amphores)
     st.subheader("🏺 Amphores")
+
+    # Gestion de la protection de l'édition des amphores
+    if "amphores_deverrouille" not in st.session_state:
+        st.session_state["amphores_deverrouille"] = False
+    editamphores = editamphores or st.session_state["amphores_deverrouille"]
 
     # Initialisation au premier chargement de la session
     if "amphores" not in st.session_state:
@@ -518,6 +524,33 @@ if fichier_genere:
 
 # Zone de saisie
 if prompt := st.chat_input("Posez votre question..."):
+
+    #### Dispatcher de commandes (interceptées avant tout appel au LLM) - TODO ya peut etre mieux
+    def _cmd_amphores(arg):
+        if editpasswd and arg == editpasswd:
+            st.session_state["amphores_deverrouille"] = True
+
+    def _cmd_clear(arg):
+        prompt_actif = amphore_actif.get("system_prompt", sys_prompt)
+        st.session_state.messages = [{"role": "system", "content": prompt_actif}]
+        st.session_state.pop("fichier_info",    None)
+        st.session_state.pop("fichier_nom",     None)
+        st.session_state.pop("fichier_genere",  None)
+        st.session_state.pop("derniere_reponse",None)
+        st.session_state["temps_reponse"] = None
+
+    COMMANDES = {
+        "/amphores": _cmd_amphores,
+        "/clear": _cmd_clear,
+    }
+
+    if prompt.startswith("/"):
+        cmd, _, arg = prompt.partition(" ")
+        if cmd in COMMANDES:
+            COMMANDES[cmd](arg.strip())
+            st.rerun()
+    #### FIN dispatcher
+
     _t0_question = time.time()
     #st.session_state.messages.append({"role": "user", "content": prompt}
     # Construction du message user (avec ou sans fichier)
