@@ -461,23 +461,25 @@ with st.sidebar:
     tr = st.session_state.get("temps_reponse")
     st.markdown(f"**Temps de réponse :** {f'{int(tr)}s' if tr is not None else 'None'}")
         
-    # Infos
-    #st.divider()
-    st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
-    st.header("Informations")
-    st.markdown(f"**Modèle :** `{model}`")
-    st.markdown(f"**Température :** `{temperature}`")
-    st.markdown(f"**Max tokens :** `{max_tokens}`")
-    st.markdown(f"**Outils actifs :** {len(outils)}")
-    for o in outils:
-        nom   = o["function"]["name"]
-        icone = ICONES_OUTILS.get(nom, "⚙️")
-        st.markdown(f"{icone} `{nom}`")
+    # Infos (visible uniquement en mode debug, activable via la commande "/debug on")
+    if st.session_state.get("debug_mode"):
+        #st.divider()
+        st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+        st.header("Informations")
+        st.markdown(f"**Modèle :** `{model}`")
+        st.markdown(f"**URL LLM :** `{conf.get('llm', 'base_url')}`")
+        st.markdown(f"**URL Whisper :** `{conf.get('whisper', 'base_url')}`")
+        st.markdown(f"**Température :** `{temperature}`")
+        st.markdown(f"**Max tokens :** `{max_tokens}`")
+        st.markdown(f"**Outils actifs :** {len(outils)}")
+        for o in outils:
+            nom   = o["function"]["name"]
+            icone = ICONES_OUTILS.get(nom, "⚙️")
+            st.markdown(f"{icone} `{nom}`")
 
 
 # Interface Streamlit Entete
 st.title(header)
-st.caption(f"Modèle : `{model}` — {conf.get('llm', 'base_url')}")
 
 # Initialisation de l'historique
 if "messages" not in st.session_state:
@@ -539,9 +541,13 @@ if prompt := st.chat_input("Posez votre question..."):
         st.session_state.pop("derniere_reponse",None)
         st.session_state["temps_reponse"] = None
 
+    def _cmd_debug(arg):
+        st.session_state["debug_mode"] = arg.strip().lower() in ("on", "1", "true")
+
     COMMANDES = {
         "/amphores": _cmd_amphores,
         "/clear": _cmd_clear,
+        "/debug": _cmd_debug,
     }
 
     if prompt.startswith("/"):

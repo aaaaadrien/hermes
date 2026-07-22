@@ -6,7 +6,7 @@ base_url = http://localhost:8080/v1
 api_key = sk-no-key-required
 
 # Nom du modèle (facultatif si llamacpp ou vLLM, masis nécessaire pour ollama)
-model = gemma4
+model = default
 
 # Nombre maximum de tokens
 max_tokens = 65536
