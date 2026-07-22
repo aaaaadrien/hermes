@@ -58,6 +58,16 @@ sudo dnf install --nogpgcheck https://mirrors.rpmfusion.org/free/el/rpmfusion-fr
 
 ##  Lancement
 
+### Copie de la config
+
+Avant toute chose, créez le fichier de config à partir de l'exemple donné : 
+```bash
+cp hermes.conf.example hermes.conf
+```
+
+Personnalisez éventuellement ce fichier selon ce que vous souhaitez !
+
+
 ### Interface CLI (terminal)
 
 ```bash
