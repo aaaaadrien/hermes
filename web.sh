@@ -1,4 +1,4 @@
 #! /bin/bash
 source venv/bin/activate
-streamlit run hermes-web.py
+python -m streamlit run hermes-web.py
 deactivate
