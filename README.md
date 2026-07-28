@@ -55,7 +55,7 @@ enable_transcrire_audio = true
 ```
 
 Pour les fichiers **vidéo**, la piste audio est d'abord extraite et convertie en WAV via **ffmpeg** avant l'envoi à whisper.cpp
-De fait, `ffmpeg` doit donc être installé et accessible dans le `PATH`.
+De fait, `ffmpeg` doit donc être installé et accessible dans le `PATH` de la machine qui héberge ce projet (pas sur le serveur d'inférence)
 
 Dans le cadre de RHEL et clones, ffmpeg est dispo dans RPM Fusion Free : 
 ```bash
