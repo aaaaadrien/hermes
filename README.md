@@ -17,11 +17,19 @@
 - Un serveur d'inférence (exemple llama.cpp) mais pas forcément sur la même machine
 - Un serveur whisper.cpp (optionnel) pour retranscrire de l'audio ou une vidéo pour analyse mais pas forcément sur la même machine
 
+## Création d'un venv Python 
+
+Pour isoler les dépendances python, créer un virtual env :
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
 ## Installation des dépendances
 
 Via pip (universel)
 ```bash
-pip install openai requests streamlit ddgs bs4 pymupdf pandas openpyxl tabulate odfpy fpdf2 python-docx cachetools
+pip install -r requirements.txt
 ```
 - Gestion LLM : openai
 - Requêtes LLM et externe : requests
@@ -78,11 +86,6 @@ python hermes-cli.py
 
 ```bash
 streamlit run hermes-web.py
-```
-
-Si streamlit est introuvable (pas dans le $PATH) : 
-```bash
-~/.local/bin/streamlit run hermes-web.py
 ```
 
 ### Configuration de Streamlit

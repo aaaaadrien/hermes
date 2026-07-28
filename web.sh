@@ -1,3 +1,4 @@
 #! /bin/bash
-
-/home/adrien/.local/bin/streamlit run hermes-web.py
+source venv/bin/activate
+streamlit run hermes-web.py
+deactivate

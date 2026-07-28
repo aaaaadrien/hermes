@@ -1,0 +1,13 @@
+openai
+requests
+streamlit
+ddgs
+bs4
+pymupdf
+pandas
+openpyxl
+tabulate
+odfpy
+fpdf2
+python-docx
+cachetools
