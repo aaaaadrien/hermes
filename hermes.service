@@ -1,0 +1,14 @@
+[Unit]
+Description=Hermes
+After=network.target
+
+[Service]
+Type=simple
+User=hermes
+WorkingDirectory=/opt/hermes
+ExecStart=/opt/hermes/web.sh
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

@@ -101,18 +101,19 @@ Voici un exemple :
 ```
 [browser]
 serverAddress = "0.0.0.0"
-#serverAddress = "localhost"
 gatherUsageStats = false
-serverPort = 8501
 
 [server]
+address = "0.0.0.0"
+port = 8888
 maxUploadSize = 1500
 ```
 
 Dans la section **browser** :
-- **serverAddress** permet de changer l'adresse d'écoute, 0.0.0.0 pour toutes les adresses, localhost par défaut
-- **serverPort** permet de changer le port d'écoute, 8501 par défaut
+- **serverAddress** permet de ne pas afficher dans la console l'IP de l'interface LAN et l'IP publique
 - **gatherUsageStats** permet de désactiver l'envoi de statistiques à Streamlit
 
 Dans la section **server** :
+- **address** permet d'écouter sur toutes les interfaces (ou l'interface donnée). Par défaut 0.0.0.0
+- **port** permet de changer le port d'écoute, 8501 par défaut
 - **maxUploadSize** permet de changer la taille max des fichiers uploadés en MB, par défaut 200
