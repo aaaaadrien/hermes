@@ -48,6 +48,17 @@ enable_transcrire_audio   = true
 # Laisser vide = édition toujours affichée par défaut (pas de protection).
 editpasswd = MDP
 
+[auth]
+# authentification : permet de gérer l'authentification dans l'outil
+# none    : pas de compte, mode éphémère, aucune conversation sauvegardée
+# userpass: écran de connexion / création de compte, conversations sauvegardées dans hermes-users.db
+authentification = none
+
+# register : permet d'activer la création de compte ou non
+# on  : l'onglet « Créer un compte » est affiché sur l'écran de connexion
+# off : seul l'onglet « Connexion » est affiché (les comptes doivent être créés autrement)
+register = off
+
 [web]
 # Titre affiché dans l'onglet du navigateur
 page_title = Hermes chatbot by Linuxtricks.fr

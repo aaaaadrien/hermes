@@ -6,6 +6,8 @@ chardet
 
 streamlit
 
+extra-streamlit-components
+
 ddgs
 
 bs4

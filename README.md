@@ -34,6 +34,7 @@ pip install -r requirements.txt
 - Gestion LLM : openai
 - Requêtes LLM et externe : requests
 - Interface web : streamlit
+- FOnctions supplémentaires (cookie de connexion persistante) : extra-streamlit-components																		   
 - Recherche web : ddgs
 - Scrap pages : bs4
 - Gestion fichier PDF : pymupdf fpdf2
@@ -63,6 +64,30 @@ sudo dnf install --nogpgcheck https://dl.fedoraproject.org/pub/epel/epel-release
 sudo dnf install --nogpgcheck https://mirrors.rpmfusion.org/free/el/rpmfusion-free-release-$(rpm -E %rhel).noarch.rpm
 ```
 
+## Comptes utilisateurs & historique des conversations (interface web)
+
+**EXPERIMENTAL NE PAS ENCORE UTILISER**
+
+L'interface web peut fonctionner selon deux modes, paramétré dans `hermes.conf` :
+
+```ini
+[auth]
+authentification = none      # ou userpass
+register = off               # ou on
+```
+
+### `authentification = none` (par défaut)
+
+Comportement éphémère : pas de compte, pas de sauvegarde des conversations.
+Chaque session de navigateur repart de zéro.
+
+### `authentification = userpass`
+
+Active la gestion de comptes (utilisateur/mot de passe) et la sauvegarde des conversations, stockées dans **`hermes-users.db`** (base SQLite créée automatiquement au premier lancement, aucun serveur de base de données externe requis).
+
+Une fois connecté, chaque échange est automatiquement enregistré. La sidebar propose de lister, reprendre, renommer et supprimer ses conversations. 
+
+Si on veut autoriser la création de compte (juste username + pass, pas de mail) mettre **`register`** à on.
 
 ##  Lancement
 

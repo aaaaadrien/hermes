@@ -7,7 +7,7 @@ La configuration est lue depuis hermes-web.conf.
 Les outils sont définis dans hermes_tools.py.
 
 Lancement :
-  streamlit run hermes-web.py
+  python -m streamlit run hermes-web.py
 """
 
 import json
@@ -258,9 +258,24 @@ max_tokens  = conf.getint("llm",   "max_tokens",   fallback=2048)
 temperature = conf.getfloat("llm", "temperature",  fallback=0.7)
 editpasswd = conf.get("amphores", "editpasswd", fallback="").strip()
 editamphores = not bool(editpasswd)  # sans mot de passe défini : édition affichée par défaut
+authentification = conf.get("auth", "authentification", fallback="none").strip().lower()
+register = conf.getboolean("auth", "register", fallback=False)
 
 #st.set_page_config(page_title=page_title, page_icon=page_icon, layout="centered")
 st.set_page_config(page_title=page_title, page_icon=page_icon, layout="wide")
+
+# Import des modules comptes et conversations (uniquement si authentification différent de none)
+if authentification == "userpass":
+    from hermes_accounts import ecran_connexion, obtenir_cookie_manager
+    from hermes_conversations import ajouter_message, creer_conversation, vider_conversation, widget_conversations
+    cookie_manager = obtenir_cookie_manager()  # une seule instance par run, réutilisée pour connexion/déconnexion
+    utilisateur = ecran_connexion(cookie_manager, register)   # affiche l'écran de connexion, ou None si mode anonyme
+else:
+    utilisateur = None
+
+# True uniquement si un compte est réellement connecté (pas en mode éphémère) :
+# c'est cette var qui déclenche la sauvegarde/chargement des conversations (y a peut etre plus clean)
+mode_persistant = authentification == "userpass" and utilisateur is not None
 
 
 # Interface Streamlit Latérale
@@ -309,6 +324,10 @@ with st.sidebar:
     )
     if amphore_actif.get("description"):
         st.caption(f"*{amphore_actif['description']}*")
+
+    # Historique des conversations (uniquement si un compte est réellement connecté)
+    if mode_persistant:
+        widget_conversations(utilisateur, amphore_actif["id"], amphore_actif["system_prompt"])
 
     # Boutons de gestion (masqués si editamphores = no dans hermes.conf)
     if editamphores:
@@ -453,7 +472,22 @@ with st.sidebar:
         st.session_state.pop("fichier_genere",  None)
         st.session_state.pop("derniere_reponse",None)
         st.session_state["temps_reponse"] = None
+        if mode_persistant and st.session_state.get("conversation_id") is not None:
+            vider_conversation(st.session_state["conversation_id"])
         st.rerun()
+
+    # Bouton Connexion Déconnexion (uniquement si authentification = userpass)
+    if authentification == "userpass":
+        st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+        if mode_persistant:
+            if st.button("🚪 Déconnexion", use_container_width=True):
+                st.session_state["auth_afficher_deconnexion"] = True
+                st.rerun()
+        else:
+            if st.button("🔑 Connexion", use_container_width=True, help="Se connecter ou créer un compte pour sauvegarder vos conversations"):
+                st.session_state["auth_afficher_connexion"] = True
+                st.rerun()
+
 
     # Temps de réponse (infos)
     #st.divider()
@@ -575,6 +609,14 @@ if prompt := st.chat_input("Posez votre question..."):
 
     # Ajout à l'historique et affichage
     st.session_state.messages.append(msg_user_llm)
+    # Gestion persistant
+    if mode_persistant:
+        if st.session_state.get("conversation_id") is None:
+            st.session_state["conversation_id"] = creer_conversation(
+                utilisateur["id"], amphore_actif["id"]
+            )
+        ajouter_message(st.session_state["conversation_id"], "user", prompt)
+   # fin Gestion persistant
     with st.chat_message("user"):
         st.markdown(prompt)
         if info_fichier:
@@ -688,6 +730,8 @@ if prompt := st.chat_input("Posez votre question..."):
             #txt_final = st.write_stream(final)  # TODO BUG STREAM
             st.session_state.messages.append({"role": "assistant", "content": txt_final})
             st.session_state["derniere_reponse"] = txt_final
+            if mode_persistant:
+                ajouter_message(st.session_state["conversation_id"], "assistant", txt_final)
 
         # Sinon on utilise pas d'outil
         else:
@@ -710,6 +754,8 @@ if prompt := st.chat_input("Posez votre question..."):
 
             st.session_state.messages.append({"role": "assistant", "content": texte})
             st.session_state["derniere_reponse"] = texte
+            if mode_persistant:
+                ajouter_message(st.session_state["conversation_id"], "assistant", texte)
 
         # Temps de réponse (du clic "Envoyer" à la réponse finale affichée)
         st.session_state["temps_reponse"] = time.time() - _t0_question
