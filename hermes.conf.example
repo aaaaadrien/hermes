@@ -27,6 +27,19 @@ response_format = json
 # Langue forcée pour la transcription (code ISO-639-1, laisser vide pour auto-détection)
 language = fr
 
+[image]
+# URL de base du serveur stablediffusion.cpp (API compatible OpenAI /v1/images/generations)
+base_url = http://localhost:8082
+
+# Route de génération d'image
+endpoint = /v1/images/generations
+
+# Taille par défaut de l'image générée (LARGEURxHAUTEUR)
+size = 512x512
+
+# Nombre d'étapes de diffusion (laisser vide pour utiliser la valeur par défaut du serveur)
+steps =
+
 [agent]
 # Prompt système 
 system_prompt = Tu es un agent expert. Utilise tes outils pour donner des réponses précises et bien structurées.
@@ -42,6 +55,7 @@ enable_datetime           = true
 enable_generer_fichier    = true
 enable_youtube_transcript = true
 enable_transcrire_audio   = true
+enable_generation_image   = true
 
 [amphores]
 # Mot de passe pour déverrouiller l'édition des amphores (commande /amphores <mdp> dans le chat).

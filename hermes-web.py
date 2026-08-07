@@ -470,6 +470,7 @@ with st.sidebar:
         st.session_state.pop("fichier_info",    None)
         st.session_state.pop("fichier_nom",     None)
         st.session_state.pop("fichier_genere",  None)
+        st.session_state.pop("image_generee",   None)
         st.session_state.pop("derniere_reponse",None)
         st.session_state["temps_reponse"] = None
         if mode_persistant and st.session_state.get("conversation_id") is not None:
@@ -558,6 +559,26 @@ if fichier_genere:
             st.session_state.pop("fichier_genere", None)
             st.rerun()
 
+# Image générée : aperçu + téléchargement persistants dans la vue principale
+image_generee = st.session_state.get("image_generee")
+if image_generee:
+    import base64 as _b64
+    st.image(_b64.b64decode(image_generee["b64"]), caption=image_generee["nom"], width="stretch")
+    col_dl_img, col_del_img = st.columns([5, 1])
+    with col_dl_img:
+        st.download_button(
+            label=f"⬇️ Télécharger {image_generee['nom']}",
+            data=_b64.b64decode(image_generee["b64"]),
+            file_name=image_generee["nom"],
+            mime=image_generee["mime"],
+            width="stretch",
+            key="dl_image_genere",
+        )
+    with col_del_img:
+        if st.button("🗑️", use_container_width=True, key="del_image_genere", help="Effacer l'image générée"):
+            st.session_state.pop("image_generee", None)
+            st.rerun()
+
 # Zone de saisie
 if prompt := st.chat_input("Posez votre question..."):
 
@@ -572,6 +593,7 @@ if prompt := st.chat_input("Posez votre question..."):
         st.session_state.pop("fichier_info",    None)
         st.session_state.pop("fichier_nom",     None)
         st.session_state.pop("fichier_genere",  None)
+        st.session_state.pop("image_generee",   None)
         st.session_state.pop("derniere_reponse",None)
         st.session_state["temps_reponse"] = None
 
@@ -671,7 +693,7 @@ if prompt := st.chat_input("Posez votre question..."):
                             else:
                                 res_outil = "⚠️ Aucun fichier audio/vidéo n'est joint à ce message."
                         else:
-                            res_outil = executer_outil(nom_outil, args)   # dispatcher partagé
+                            res_outil = executer_outil(nom_outil, args, conf)   # dispatcher partagé
 
                     # Interception de la génération de fichier
                     res_outil_llm = res_outil
@@ -696,6 +718,21 @@ if prompt := st.chat_input("Posez votre question..."):
                                     key=f"dl_chat_{parsed['nom']}",
                                 )
 
+                            else:
+                                st.markdown(res_outil)
+                        except (ValueError, TypeError):
+                            st.markdown(res_outil)
+                    elif nom_outil == "outil_generation_image":
+                        try:
+                            parsed = json.loads(res_outil)
+                            if isinstance(parsed, dict) and parsed.get("__image_generee__"):
+                                st.session_state["image_generee"] = parsed
+                                res_outil_llm = (
+                                    f"✅ Image `{parsed['nom']}` générée avec succès "
+                                    f"et affichée à l'utilisateur dans la vue principale."
+                                )
+                                # Aperçu immédiat dans le chat
+                                st.image(base64.b64decode(parsed["b64"]), caption=parsed["nom"], width="stretch")
                             else:
                                 st.markdown(res_outil)
                         except (ValueError, TypeError):
@@ -762,3 +799,4 @@ if prompt := st.chat_input("Posez votre question..."):
 
         # Rerendu pour que les widgets hors du bloc chat (ex: bouton de téléchargement) soient visibles
         st.rerun()
+

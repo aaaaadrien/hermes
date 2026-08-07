@@ -446,6 +446,80 @@ def outil_transcrire_audio(donnees: bytes, nom_fichier: str, conf: configparser.
 
 
 
+# Génère une image à partir d'un prompt texte via un serveur stablediffusion.cpp local.
+def outil_generation_image(prompt: str, conf: configparser.ConfigParser,
+                            negative_prompt: str = "", taille: str = "") -> str:
+    """
+    Envoie un prompt texte à un serveur stablediffusion.cpp local (API compatible
+    OpenAI /v1/images/generations) et récupère l'image générée encodée en base64.
+
+    Paramètres :
+      prompt          : description de l'image à générer
+      conf            : configuration (section [image] de hermes.conf)
+      negative_prompt : éléments à éviter dans l'image (optionnel)
+      taille          : dimensions "LARGEURxHAUTEUR" (optionnel, sinon valeur de la config)
+
+    Configuration attendue dans hermes.conf :
+        [image]
+        base_url = http://localhost:8082           # racine du serveur stablediffusion.cpp
+        endpoint = /v1/images/generations           # route compatible OpenAI
+        size     = 512x512                          # taille par défaut
+        steps    =                                  # nombre d'étapes (vide = défaut serveur)
+
+    Retourne un JSON avec {b64, mime, nom, format, __image_generee__: true}.
+    """
+    import json as _json
+
+    if conf is None:
+        conf = configparser.ConfigParser()
+
+    try:
+        base_url = conf.get("image", "base_url", fallback="http://localhost:8082").rstrip("/")
+        endpoint = conf.get("image", "endpoint", fallback="/v1/images/generations")
+        taille   = taille or conf.get("image", "size", fallback="512x512")
+        steps    = conf.get("image", "steps", fallback="").strip()
+
+        url     = f"{base_url}{endpoint}"
+        payload = {
+            "prompt":          prompt,
+            "size":            taille,
+            "n":               1,
+            "response_format": "b64_json",
+        }
+        if negative_prompt:
+            payload["negative_prompt"] = negative_prompt
+        if steps:
+            payload["steps"] = int(steps)
+
+        reponse = requests.post(url, json=payload, timeout=600)
+        reponse.raise_for_status()
+        donnees = reponse.json()
+
+        images = donnees.get("data") or []
+        if not images or "b64_json" not in images[0]:
+            return "⚠️ Le serveur de génération d'image n'a retourné aucune image."
+
+        b64 = images[0]["b64_json"]
+        nom = f"image_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+
+        return _json.dumps({
+            "__image_generee__": True,
+            "b64":    b64,
+            "mime":   "image/png",
+            "nom":    nom,
+            "format": "png",
+        })
+
+    except requests.exceptions.ConnectionError:
+        return "⚠️ Impossible de contacter le serveur stablediffusion.cpp."
+    except requests.exceptions.Timeout:
+        return "⚠️ Délai d'attente dépassé lors de la génération d'image."
+    except requests.exceptions.HTTPError as e:
+        return f"⚠️ Erreur HTTP du serveur stablediffusion.cpp : {e}"
+    except Exception as e:
+        return f"⚠️ Erreur lors de la génération d'image : {e}"
+
+
 # Retourne la date et l'heure actuelles.
 def outil_datetime() -> str:
     """
@@ -778,6 +852,41 @@ CATALOGUE_OUTILS = [
     {
         "type": "function",
         "function": {
+            "name": "outil_generation_image",
+            "description": (
+                "Génère une image à partir d'une description textuelle (prompt) via un serveur "
+                "stablediffusion.cpp local. Utilise cet outil quand l'utilisateur demande de "
+                "créer, dessiner, générer ou illustrer une image."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": (
+                            "Description détaillée de l'image à générer "
+                            "(en anglais de préférence pour de meilleurs résultats)."
+                        ),
+                    },
+                    "negative_prompt": {
+                        "type": "string",
+                        "description": "Éléments à éviter dans l'image générée (optionnel).",
+                    },
+                    "taille": {
+                        "type": "string",
+                        "description": (
+                            "Dimensions de l'image au format LARGEURxHAUTEUR (ex : 512x512). "
+                            "Optionnel, valeur par défaut définie dans la config."
+                        ),
+                    },
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "outil_transcrire_audio",
             "description": (
                 "Transcrit en texte le fichier audio ou vidéo joint au message courant "
@@ -825,6 +934,7 @@ ICONES_OUTILS = {
     "outil_datetime":           "🕐 Date & Heure",
     "outil_generer_fichier":    "💾 Génération fichier",
     "outil_transcrire_audio":   "🎙️ Transcription audio/vidéo",
+    "outil_generation_image":   "🎨 Génération d'image",
 }
 
 
@@ -842,6 +952,7 @@ def outils_actifs(conf: configparser.ConfigParser) -> list:
         "enable_datetime":          "outil_datetime",
         "enable_generer_fichier":   "outil_generer_fichier",
         "enable_transcrire_audio":  "outil_transcrire_audio",
+        "enable_generation_image": "outil_generation_image",
     }
     actifs = []
     for cle, nom in mapping.items():
@@ -851,7 +962,7 @@ def outils_actifs(conf: configparser.ConfigParser) -> list:
 
 # Dispatcher central : appelle la bonne fonction selon le nom renvoyé par le LLM.
 # Toujours utiliser cette fonction plutôt qu'appeler les outils directement.
-def executer_outil(nom: str, args: dict) -> str:
+def executer_outil(nom: str, args: dict, conf: configparser.ConfigParser = None) -> str:
     if nom == "outil_meteo":
         return outil_meteo(args["ville"])
     elif nom == "outil_wiki":
@@ -868,7 +979,10 @@ def executer_outil(nom: str, args: dict) -> str:
         return outil_datetime()
     elif nom == "outil_generer_fichier":
         return outil_generer_fichier(args["contenu"], args["format"], args["nom_fichier"])
+    elif nom == "outil_generation_image":
+        return outil_generation_image(args["prompt"], conf, args.get("negative_prompt", ""), args.get("taille", ""))
     elif nom == "outil_transcrire_audio":
         # Intercepté en amiont par hermes-web, ce cas est déclencé si jamais on utilise l'outil depuis la CLI
         return "⚠️ Aucun fichier audio/vidéo joint : cet outil nécessite un fichier attaché depuis l'interface web."
     return f"⚠️ Outil inconnu : « {nom} »."
+

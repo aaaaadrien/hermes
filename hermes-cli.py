@@ -119,7 +119,7 @@ def main():
                     args = {}
 
                 print(f"  {C.YELLOW}⚙  {label} — args : {args}{C.RESET}")
-                resultat = executer_outil(nom_outil, args)   # ← dispatcher partagé
+                resultat = executer_outil(nom_outil, args, conf)   # dispatcher partagé
                 print(f"  {C.DIM}↳ {resultat}{C.RESET}")
 
                 messages.append({
@@ -153,3 +153,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
