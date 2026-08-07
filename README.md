@@ -64,6 +64,29 @@ sudo dnf install --nogpgcheck https://dl.fedoraproject.org/pub/epel/epel-release
 sudo dnf install --nogpgcheck https://mirrors.rpmfusion.org/free/el/rpmfusion-free-release-$(rpm -E %rhel).noarch.rpm
 ```
 
+## Génération d'image
+
+Le LLM peut générer une image à partir d'une simple description texte (prompt) via l'outil outil_generation_image, qui s'appuie sur un serveur **stablediffusion.cpp** (API compatible OpenAI `/v1/images/generations`).
+
+Cet outil est activable/désactivable comme les autres, si vous n'avez pas de stablediffusion.cpp, dans `hermes.conf` :
+```ini
+[tools]
+enable_generation_image = true
+```
+
+L'URL du serveur ainsi que la taille par défaut se règlent dans la section `[image]` :
+```ini
+[image]
+base_url = http://localhost:8082
+endpoint = /v1/images/generations
+size = 512x512
+steps =
+```
+
+L'image générée s'affiche directement dans la conversation (interface web), avec un bouton de téléchargement.
+
+_Note :_ La taille de l'image peut être demandée explicitement, mais attention, plus la résolution demandée est grande, plus la génération sera longue (et le serveur Stable Diffusion s'il est autohébergé, devra avoir assez de ressources)
+
 ## Comptes utilisateurs & historique des conversations (interface web)
 
 **EXPERIMENTAL NE PAS ENCORE UTILISER**
