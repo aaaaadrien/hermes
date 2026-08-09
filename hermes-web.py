@@ -563,7 +563,13 @@ if fichier_genere:
 image_generee = st.session_state.get("image_generee")
 if image_generee:
     import base64 as _b64
-    st.image(_b64.b64decode(image_generee["b64"]), caption=image_generee["nom"], width="stretch")
+    #st.image(_b64.b64decode(image_generee["b64"]), caption=image_generee["nom"], width="stretch")
+    st.markdown(
+        f'<img src="data:{image_generee["mime"]};base64,{image_generee["b64"]}" '
+        f'style="max-height:512px;width:auto;max-width:100%;" />',
+        unsafe_allow_html=True,
+    )
+    st.caption(image_generee["nom"])
     col_dl_img, col_del_img = st.columns([5, 1])
     with col_dl_img:
         st.download_button(
@@ -732,7 +738,13 @@ if prompt := st.chat_input("Posez votre question..."):
                                     f"et affichée à l'utilisateur dans la vue principale."
                                 )
                                 # Aperçu immédiat dans le chat
-                                st.image(base64.b64decode(parsed["b64"]), caption=parsed["nom"], width="stretch")
+                                # st.image(base64.b64decode(parsed["b64"]), caption=parsed["nom"], width="stretch")
+                                st.markdown(
+                                    f'<img src="data:{parsed["mime"]};base64,{parsed["b64"]}" '
+                                    f'style="max-height:512px;width:auto;max-width:100%;" />',
+                                    unsafe_allow_html=True,
+                                )
+                                st.caption(parsed["nom"])
                             else:
                                 st.markdown(res_outil)
                         except (ValueError, TypeError):
@@ -799,4 +811,3 @@ if prompt := st.chat_input("Posez votre question..."):
 
         # Rerendu pour que les widgets hors du bloc chat (ex: bouton de téléchargement) soient visibles
         st.rerun()
-

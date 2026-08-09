@@ -2,7 +2,11 @@
 
 - Agent conversationnel en Python connecté à un modèle LLM tournant en local via **llama.cpp**.
 - Disponible en deux interfaces : **terminal (CLI)** et **web (Streamlit)**.
-- Expérimentation de l'usage de tools, nécessite un modèle compatible/
+- Expérimentation de l'usage de tools, nécessite un modèle compatible.
+
+__Pourquoi Hermès ?__
+
+Dans la religion grecque antique, Hermès est le messager des dieux. Quoi de mieux pour nommer un outil qui est le messager de l'IA :)
 
 ## Fichiers
 
