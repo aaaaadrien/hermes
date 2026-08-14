@@ -42,7 +42,7 @@ steps =
 
 [agent]
 # Prompt système 
-system_prompt = Tu es un agent expert. Utilise tes outils pour donner des réponses précises et bien structurées.
+system_prompt = Répond en français sauf avis contraire
 
 [tools]
 # Active ou désactive chaque outil individuellement (true / false)
@@ -58,6 +58,12 @@ enable_transcrire_audio   = true
 enable_generation_image   = true
 
 [amphores]
+# Disponibilité des amphores dans l'interface web :
+# disabled : amphores non disponibles dans l'interface (défaut)
+# user     : disponibles uniquement pour les utilisateurs authentifiés (nécessite [auth] authentification = userpass)
+# all      : disponibles pour tout le monde, authentifié ou non
+mode = disabled
+
 # Mot de passe pour déverrouiller l'édition des amphores (commande /amphores <mdp> dans le chat).
 # Laisser vide = édition toujours affichée par défaut (pas de protection).
 editpasswd = MDP

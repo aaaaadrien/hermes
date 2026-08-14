@@ -32,6 +32,8 @@ from hermes_tools import outil_transcrire_audio
 from hermes_amphores import (
     charger_amphores, sauvegarder_amphores, amphore_par_id,
     creer_amphore, mettre_a_jour_amphore, supprimer_amphore, ID_DEFAUT,
+    charger_amphores_perso, creer_amphore_perso,
+    mettre_a_jour_amphore_perso, supprimer_amphore_perso,
 )
 
 # Gestion de l'upload de fichiers
@@ -258,6 +260,9 @@ max_tokens  = conf.getint("llm",   "max_tokens",   fallback=2048)
 temperature = conf.getfloat("llm", "temperature",  fallback=0.7)
 editpasswd = conf.get("amphores", "editpasswd", fallback="").strip()
 editamphores = not bool(editpasswd)  # sans mot de passe défini : édition affichée par défaut
+amphores_mode = conf.get("amphores", "mode", fallback="disabled").strip().lower()
+if amphores_mode not in ("disabled", "user", "all"):
+    amphores_mode = "disabled"
 authentification = conf.get("auth", "authentification", fallback="none").strip().lower()
 register = conf.getboolean("auth", "register", fallback=False)
 
@@ -277,62 +282,98 @@ else:
 # c'est cette var qui déclenche la sauvegarde/chargement des conversations (y a peut etre plus clean)
 mode_persistant = authentification == "userpass" and utilisateur is not None
 
+# Visibilité des amphores selon [amphores] mode (disabled / user / all)
+amphores_visibles = amphores_mode == "all" or (amphores_mode == "user" and utilisateur is not None)
+
 
 # Interface Streamlit Latérale
 outils = outils_actifs(conf)   # liste filtrée selon [tools] dans le .conf
 
 with st.sidebar:
 
-    # Contextes système (Amphores)
-    st.subheader("🏺 Amphores")
+    if amphores_visibles:
+        # Contextes système (Amphores)
+        st.subheader("🏺 Amphores")
 
-    # Gestion de la protection de l'édition des amphores
-    if "amphores_deverrouille" not in st.session_state:
-        st.session_state["amphores_deverrouille"] = False
-    editamphores = editamphores or st.session_state["amphores_deverrouille"]
+        # Gestion de la protection de l'édition des amphores globales
+        if "amphores_deverrouille" not in st.session_state:
+            st.session_state["amphores_deverrouille"] = False
+        editamphores = editamphores or st.session_state["amphores_deverrouille"]
 
-    # Initialisation au premier chargement de la session
-    if "amphores" not in st.session_state:
-        st.session_state["amphores"] = charger_amphores(sys_prompt)
-    if "amphore_actif_id" not in st.session_state:
-        st.session_state["amphore_actif_id"] = st.session_state["amphores"][0]["id"]
+        # Amphores globales, chargées une fois par session, persistées en JSON
+        if "amphores" not in st.session_state:
+            st.session_state["amphores"] = charger_amphores(sys_prompt)
+        amphores_globales = st.session_state["amphores"]
+        for a in amphores_globales:
+            a["origine"] = "globale"
 
-    amphores_list = st.session_state["amphores"]
-    amphore_actif = amphore_par_id(amphores_list, st.session_state["amphore_actif_id"]) or amphores_list[0]
-    idx_actif = next((i for i, g in enumerate(amphores_list) if g["id"] == amphore_actif["id"]), 0)
+        # Amphores perso, uniquement pour un utilisateur authentifié, en base
+        peut_gerer_perso = utilisateur is not None
+        if peut_gerer_perso:
+            if "amphores_perso" not in st.session_state:
+                st.session_state["amphores_perso"] = charger_amphores_perso(utilisateur["id"])
+            amphores_perso = st.session_state["amphores_perso"]
+        else:
+            amphores_perso = []
+        for a in amphores_perso:
+            a["origine"] = "perso"
 
-    def _appliquer_amphore_selectionnee():
-        """Callback : applique immédiatement l'amphore choisie dans le menu déroulant
-        (sans réinitialiser la conversation — seul le bouton 'Effacer la conversation' le fait)."""
-        liste = st.session_state["amphores"]
-        idx = st.session_state["sel_amphore"]
-        sel = liste[idx]
-        st.session_state["amphore_actif_id"] = sel["id"]
-        if st.session_state.get("messages") and st.session_state.messages[0]["role"] == "system":
-            st.session_state.messages[0]["content"] = sel["system_prompt"]
+        # Liste combinée affichée : globales d'abord, puis perso
+        amphores_list = amphores_globales + amphores_perso
 
-    # Sélecteur de contexte, appliqué immédiatement via callback
-    st.selectbox(
-        "Contexte actif",
-        options=range(len(amphores_list)),
-        index=idx_actif,
-        format_func=lambda i: amphores_list[i]["nom"],
-        label_visibility="visible",
-        key="sel_amphore",
-        help="🏺 Les amphores sont des contextes personnalisés (prompt système) qui changent le comportement de l'IA.",
-        on_change=_appliquer_amphore_selectionnee,
-    )
-    if amphore_actif.get("description"):
-        st.caption(f"*{amphore_actif['description']}*")
+        if "amphore_actif_id" not in st.session_state:
+            st.session_state["amphore_actif_id"] = amphores_list[0]["id"]
+
+        amphore_actif = amphore_par_id(amphores_list, st.session_state["amphore_actif_id"]) or amphores_list[0]
+
+        def _appliquer_amphore_selectionnee():
+            """Callback : applique immédiatement l'amphore choisie dans le menu déroulant
+            (sans réinitialiser la conversation, seul le bouton 'Effacer la conversation' le fait).
+            Défensif : l'état du widget peut être périmé (ex : liste d'amphores modifiée entre
+            deux runs via une modale) auquel cas on ignore simplement le changement."""
+            liste = st.session_state["amphores"] + st.session_state.get("amphores_perso", [])
+            id_choisi = st.session_state.get("sel_amphore")
+            sel = amphore_par_id(liste, id_choisi)
+            if sel is None:
+                return
+            st.session_state["amphore_actif_id"] = sel["id"]
+            if st.session_state.get("messages") and st.session_state.messages[0]["role"] == "system":
+                st.session_state.messages[0]["content"] = sel["system_prompt"]
+
+        # Sélecteur de contexte , appliqué immédiatement via callbac
+        _labels_amphores = {
+            a["id"]: ("🌐 " if a["origine"] == "globale" else "👤 ") + a["nom"] for a in amphores_list
+        }
+        st.selectbox(
+            "Contexte actif",
+            options=[a["id"] for a in amphores_list],
+            index=[a["id"] for a in amphores_list].index(amphore_actif["id"]),
+            format_func=lambda id_: _labels_amphores.get(id_, id_),
+            label_visibility="visible",
+            key="sel_amphore",
+            help="🏺 Les amphores sont des contextes personnalisés (prompt système) qui changent le comportement de l'IA. "
+                 "🌐 = globale (partagée) · 👤 = perso (uniquement visible par vous).",
+            on_change=_appliquer_amphore_selectionnee,
+        )
+        if amphore_actif.get("description"):
+            st.caption(f"*{amphore_actif['description']}*")
+
+    else:
+        # Amphores non disponibles (mode "disabled", ou mode "user" avec utilisateur non authentifié) :
+        # un unique contexte "Par défaut" basé sur hermes.conf, sans persistance ni state à gérer.
+        amphores_list = [{"id": ID_DEFAUT, "nom": "Par défaut", "description": "", "system_prompt": sys_prompt, "origine": "globale"}]
+        amphore_actif = amphores_list[0]
+        st.session_state["amphore_actif_id"] = ID_DEFAUT
+        peut_gerer_perso = False
 
     # Historique des conversations (uniquement si un compte est réellement connecté)
     if mode_persistant:
         widget_conversations(utilisateur, amphore_actif["id"], amphore_actif["system_prompt"])
 
-    # Boutons de gestion (masqués si editamphores = no dans hermes.conf)
-    if editamphores:
+    # Gestion des amphores globales (masquée si non visibles ou si editamphores = no)
+    if amphores_visibles and editamphores:
 
-        @st.dialog("➕ Nouvelle amphore")
+        @st.dialog("➕ Nouvelle amphore globale")
         def _dialog_nouvelle_amphore():
             f_nom = st.text_input("Nom *", placeholder="Ex : Expert Python")
             f_desc = st.text_input("Description", placeholder="Optionnel")
@@ -357,7 +398,7 @@ with st.sidebar:
             if c2.button("Annuler", use_container_width=True):
                 st.rerun()
 
-        @st.dialog("✏️ Modifier l'amphore")
+        @st.dialog("✏️ Modifier l'amphore globale")
         def _dialog_editer_amphore(amphore):
             est_defaut = amphore["id"] == ID_DEFAUT
             if est_defaut:
@@ -397,14 +438,89 @@ with st.sidebar:
                         st.session_state.messages[0]["content"] = defaut["system_prompt"]
                     st.rerun()
 
+        st.caption("🌐 Amphores globales")
         col_amph_1, col_amph_2 = st.columns(2)
         if col_amph_1.button("➕ Nouvelle", use_container_width=True, key="btn_nouvelle_amphore"):
             _dialog_nouvelle_amphore()
         if col_amph_2.button(
             "✏️ Éditer", use_container_width=True, key="btn_editer_amphore",
-            disabled=(amphore_actif["id"] == ID_DEFAUT),
+            disabled=(amphore_actif["id"] == ID_DEFAUT or amphore_actif.get("origine") != "globale"),
         ):
             _dialog_editer_amphore(amphore_actif)
+
+    # Gestion des amphores perso (utilisateur authentifié uniquement)
+    if amphores_visibles and peut_gerer_perso:
+
+        @st.dialog("➕ Nouvelle amphore perso")
+        def _dialog_nouvelle_amphore_perso():
+            f_nom = st.text_input("Nom *", placeholder="Ex : Mon style de rédaction", key="f_nom_perso")
+            f_desc = st.text_input("Description", placeholder="Optionnel", key="f_desc_perso")
+            f_prompt = st.text_area(
+                "Prompt système *", height=160, key="f_prompt_perso",
+                placeholder="Tu réponds toujours de façon concise, avec des puces",
+            )
+            c1, c2 = st.columns(2)
+            if c1.button("💾 Créer", use_container_width=True, key="btn_creer_perso"):
+                if f_nom.strip() and f_prompt.strip():
+                    nouveau = creer_amphore_perso(utilisateur["id"], f_nom, f_prompt, f_desc)
+                    st.session_state["amphores_perso"] = st.session_state.get("amphores_perso", []) + [nouveau]
+                    st.session_state["amphore_actif_id"] = nouveau["id"]
+                    if st.session_state.get("messages") and st.session_state.messages[0]["role"] == "system":
+                        st.session_state.messages[0]["content"] = nouveau["system_prompt"]
+                    st.success(f"✅ Amphore perso « {f_nom} » créée !")
+                    st.rerun()
+                else:
+                    st.warning("Le nom et le prompt système sont obligatoires.")
+            if c2.button("Annuler", use_container_width=True, key="btn_annuler_perso"):
+                st.rerun()
+
+        @st.dialog("✏️ Modifier l'amphore perso")
+        def _dialog_editer_amphore_perso(amphore):
+            e_nom = st.text_input("Nom", value=amphore["nom"], key="e_nom_perso")
+            e_desc = st.text_input("Description", value=amphore.get("description", ""), key="e_desc_perso")
+            e_prompt = st.text_area("Prompt système", value=amphore["system_prompt"], height=160, key="e_prompt_perso")
+
+            c1, c2 = st.columns(2)
+            if c1.button("💾 Sauvegarder", use_container_width=True, key="btn_save_perso"):
+                mettre_a_jour_amphore_perso(
+                    utilisateur["id"], amphore["id"],
+                    nom=e_nom, description=e_desc, system_prompt=e_prompt,
+                )
+                st.session_state["amphores_perso"] = [
+                    {**a, "nom": e_nom, "description": e_desc, "system_prompt": e_prompt} if a["id"] == amphore["id"] else a
+                    for a in st.session_state.get("amphores_perso", [])
+                ]
+                if (st.session_state.get("messages") and st.session_state.messages[0]["role"] == "system"
+                        and st.session_state["amphore_actif_id"] == amphore["id"]):
+                    st.session_state.messages[0]["content"] = e_prompt
+                st.success("✅ Amphore perso mise à jour !")
+                st.rerun()
+            if c2.button("Fermer", use_container_width=True, key="btn_close_perso"):
+                st.rerun()
+
+            st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+            del_confirm = st.checkbox("Je confirme la suppression", key="chk_del_amphore_perso")
+            if st.button("🗑️ Supprimer cette amphore", use_container_width=True, key="btn_del_perso", disabled=not del_confirm):
+                supprimer_amphore_perso(utilisateur["id"], amphore["id"])
+                st.session_state["amphores_perso"] = [
+                    a for a in st.session_state.get("amphores_perso", []) if a["id"] != amphore["id"]
+                ]
+                # On revient toujours sur le contexte "Par défaut" (globale) après suppression
+                defaut = amphore_par_id(st.session_state["amphores"], ID_DEFAUT) or st.session_state["amphores"][0]
+                st.session_state["amphore_actif_id"] = defaut["id"]
+                if st.session_state.get("messages") and st.session_state.messages[0]["role"] == "system":
+                    st.session_state.messages[0]["content"] = defaut["system_prompt"]
+                st.rerun()
+
+        st.caption("👤 Mes amphores perso")
+        col_perso_1, col_perso_2 = st.columns(2)
+        if col_perso_1.button("➕ Nouvelle", use_container_width=True, key="btn_nouvelle_amphore_perso"):
+            _dialog_nouvelle_amphore_perso()
+        if col_perso_2.button(
+            "✏️ Éditer", use_container_width=True, key="btn_editer_amphore_perso",
+            disabled=(amphore_actif.get("origine") != "perso"),
+        ):
+            _dialog_editer_amphore_perso(amphore_actif)
 
     # fin Contextes (Amphores)
     
@@ -590,7 +706,7 @@ if prompt := st.chat_input("Posez votre question..."):
 
     #### Dispatcher de commandes (interceptées avant tout appel au LLM) - TODO ya peut etre mieux
     def _cmd_amphores(arg):
-        if editpasswd and arg == editpasswd:
+        if amphores_visibles and editpasswd and arg == editpasswd:
             st.session_state["amphores_deverrouille"] = True
 
     def _cmd_clear(arg):
