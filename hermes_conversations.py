@@ -7,6 +7,7 @@ Importé par hermes-web.py :
     from hermes_conversations import ajouter_message, vider_conversation, widget_conversations
 """
 
+import json
 import time
 from typing import Optional
 
@@ -47,29 +48,43 @@ def creer_conversation(user_id: int, amphore_id: Optional[str], titre: str = TIT
         con.close()
 
 def charger_messages(conversation_id: int) -> list[dict]:
-    """Charge les messages (role/content) d'une conversation, dans l'ordre chronologique."""
+    """Charge les messages (role/content/pieces_jointes) d'une conversation, dans l'ordre chronologique."""
     con = get_connection()
     try:
         lignes = con.execute(
-            "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id ASC",
+            "SELECT role, content, pieces_jointes FROM messages WHERE conversation_id = ? ORDER BY id ASC",
             (conversation_id,),
         ).fetchall()
-        return [{"role": l["role"], "content": l["content"]} for l in lignes]
+        messages = []
+        for l in lignes:
+            m = {"role": l["role"], "content": l["content"]}
+            brut = l["pieces_jointes"] if "pieces_jointes" in l.keys() else None
+            if brut:
+                try:
+                    m["pieces_jointes"] = json.loads(brut)
+                except (ValueError, TypeError):
+                    pass
+            messages.append(m)
+        return messages
     finally:
         con.close()
 
-def ajouter_message(conversation_id: int, role: str, content: str) -> None:
+def ajouter_message(conversation_id: int, role: str, content: str, pieces_jointes: Optional[list] = None) -> None:
     """
     Ajoute un message à la conversation et met à jour sa date de modification.
     Si c'est le tout premier message utilisateur et que le titre est encore
     celui par défaut, le titre est automatiquement dérivé de son contenu.
+
+    pieces_jointes : fichiers/images générés attachés au message (liste de dicts
+    avec b64/mime/nom/type), sérialisés en JSON pour survivre à un rechargement.
     """
     maintenant = int(time.time())
+    pj_json = json.dumps(pieces_jointes, ensure_ascii=False) if pieces_jointes else None
     con = get_connection()
     try:
         con.execute(
-            "INSERT INTO messages (conversation_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-            (conversation_id, role, content, maintenant),
+            "INSERT INTO messages (conversation_id, role, content, created_at, pieces_jointes) VALUES (?, ?, ?, ?, ?)",
+            (conversation_id, role, content, maintenant, pj_json),
         )
         con.execute(
             "UPDATE conversations SET updated_at = ? WHERE id = ?",

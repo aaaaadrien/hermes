@@ -81,6 +81,16 @@ def get_connection() -> sqlite3.Connection:
         );
     """)
     con.commit()
+
+    # Migration : colonne pieces_jointes (fichiers/images générés, en JSON) ajoutée après coup.
+    # ALTER TABLE échoue silencieusement si la colonne existe déjà (bases créées avant cet ajout).
+    # TODO A SUPPR DANS QUELQUES TEMPS
+    try:
+        con.execute("ALTER TABLE messages ADD COLUMN pieces_jointes TEXT")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass
+
     return con
 
 

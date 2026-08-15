@@ -630,6 +630,30 @@ with st.sidebar:
 
 
 # Interface Streamlit Entete
+def _afficher_pieces_jointes(pieces: list, prefixe_key: str) -> None:
+    """Affiche les fichiers/images générés attachés à un message (aperçu + bouton de
+    téléchargement), avec des clés de widget uniques dérivées de prefixe_key."""
+    for j, piece in enumerate(pieces):
+        cle = f"{prefixe_key}_{j}_{piece['nom']}"
+        if piece.get("type") == "image":
+            st.markdown(
+                f'<img src="data:{piece["mime"]};base64,{piece["b64"]}" '
+                f'style="max-height:512px;width:auto;max-width:100%;" />',
+                unsafe_allow_html=True,
+            )
+            st.caption(piece["nom"])
+        else:
+            st.success(f"💾 Fichier prêt : `{piece['nom']}`")
+        st.download_button(
+            label=f"⬇️ Télécharger {piece['nom']}",
+            data=base64.b64decode(piece["b64"]),
+            file_name=piece["nom"],
+            mime=piece["mime"],
+            use_container_width=True,
+            key=cle,
+        )
+
+
 st.title(header)
 
 # Initialisation de l'historique
@@ -640,7 +664,7 @@ if "messages" not in st.session_state:
 client = creer_client(conf.get("llm", "base_url"), conf.get("llm", "api_key"))
 
 # Affichage de l'historique
-for message in st.session_state.messages:
+for i, message in enumerate(st.session_state.messages):
     role    = message["role"]    if isinstance(message, dict) else message.role
     content = message["content"] if isinstance(message, dict) else message.content
     if role in ("system", "tool") or not content:
@@ -655,51 +679,9 @@ for message in st.session_state.messages:
                     st.markdown("*(image jointe)*")
         else:
             st.markdown(content)
-
-# Fichier généré : bouton de téléchargement persistant dans la vue principale
-fichier_genere = st.session_state.get("fichier_genere")
-if fichier_genere:
-    import base64 as _b64
-    col_dl, col_del = st.columns([5, 1])
-    with col_dl:
-        st.download_button(
-            label=f"⬇️ Télécharger {fichier_genere['nom']}",
-            data=_b64.b64decode(fichier_genere["b64"]),
-            file_name=fichier_genere["nom"],
-            mime=fichier_genere["mime"],
-            use_container_width=True,
-            key="dl_genere",
-        )
-    with col_del:
-        if st.button("🗑️", use_container_width=True, key="del_genere", help="Effacer le fichier généré"):
-            st.session_state.pop("fichier_genere", None)
-            st.rerun()
-
-# Image générée : aperçu + téléchargement persistants dans la vue principale
-image_generee = st.session_state.get("image_generee")
-if image_generee:
-    import base64 as _b64
-    #st.image(_b64.b64decode(image_generee["b64"]), caption=image_generee["nom"], width="stretch")
-    st.markdown(
-        f'<img src="data:{image_generee["mime"]};base64,{image_generee["b64"]}" '
-        f'style="max-height:512px;width:auto;max-width:100%;" />',
-        unsafe_allow_html=True,
-    )
-    st.caption(image_generee["nom"])
-    col_dl_img, col_del_img = st.columns([5, 1])
-    with col_dl_img:
-        st.download_button(
-            label=f"⬇️ Télécharger {image_generee['nom']}",
-            data=_b64.b64decode(image_generee["b64"]),
-            file_name=image_generee["nom"],
-            mime=image_generee["mime"],
-            width="stretch",
-            key="dl_image_genere",
-        )
-    with col_del_img:
-        if st.button("🗑️", use_container_width=True, key="del_image_genere", help="Effacer l'image générée"):
-            st.session_state.pop("image_generee", None)
-            st.rerun()
+        pieces = message.get("pieces_jointes") if isinstance(message, dict) else None
+        if pieces:
+            _afficher_pieces_jointes(pieces, prefixe_key=f"dl_hist_{i}")
 
 # Zone de saisie
 if prompt := st.chat_input("Posez votre question..."):
@@ -791,6 +773,7 @@ if prompt := st.chat_input("Posez votre question..."):
         # Le LLM veut utiliser un outil
         if msg_ia.tool_calls:
             st.session_state.messages.append(msg_ia.model_dump())
+            pieces_jointes_reponse = []  # fichiers/images générés pendant les appels d'outils de CETTE réponse
 
             for call in msg_ia.tool_calls:
                 nom_outil = call.function.name
@@ -823,23 +806,12 @@ if prompt := st.chat_input("Posez votre question..."):
                         try:
                             parsed = json.loads(res_outil)
                             if isinstance(parsed, dict) and parsed.get("__fichier_genere__"):
-                                st.session_state["fichier_genere"] = parsed
+                                pieces_jointes_reponse.append({**parsed, "type": "fichier"})
                                 res_outil_llm = (
                                     f"✅ Fichier `{parsed['nom']}` généré avec succès "
                                     f"au format {parsed['format'].upper()}. "
-                                    f"Il est disponible en téléchargement dans la vue principale."
+                                    f"Il est disponible en téléchargement juste après cette réponse."
                                 )
-                                # Bouton dans le chat immédiatement
-                                st.success(f"💾 Fichier prêt : `{parsed['nom']}`")
-                                st.download_button(
-                                    label=f"⬇️ Télécharger {parsed['nom']}",
-                                    data=base64.b64decode(parsed["b64"]),
-                                    file_name=parsed["nom"],
-                                    mime=parsed["mime"],
-                                    use_container_width=True,
-                                    key=f"dl_chat_{parsed['nom']}",
-                                )
-
                             else:
                                 st.markdown(res_outil)
                         except (ValueError, TypeError):
@@ -848,19 +820,11 @@ if prompt := st.chat_input("Posez votre question..."):
                         try:
                             parsed = json.loads(res_outil)
                             if isinstance(parsed, dict) and parsed.get("__image_generee__"):
-                                st.session_state["image_generee"] = parsed
+                                pieces_jointes_reponse.append({**parsed, "type": "image"})
                                 res_outil_llm = (
                                     f"✅ Image `{parsed['nom']}` générée avec succès "
-                                    f"et affichée à l'utilisateur dans la vue principale."
+                                    f"et affichée à l'utilisateur juste après cette réponse."
                                 )
-                                # Aperçu immédiat dans le chat
-                                # st.image(base64.b64decode(parsed["b64"]), caption=parsed["nom"], width="stretch")
-                                st.markdown(
-                                    f'<img src="data:{parsed["mime"]};base64,{parsed["b64"]}" '
-                                    f'style="max-height:512px;width:auto;max-width:100%;" />',
-                                    unsafe_allow_html=True,
-                                )
-                                st.caption(parsed["nom"])
                             else:
                                 st.markdown(res_outil)
                         except (ValueError, TypeError):
@@ -893,10 +857,17 @@ if prompt := st.chat_input("Posez votre question..."):
 
             st.markdown(txt_final)
             #txt_final = st.write_stream(final)  # TODO BUG STREAM
-            st.session_state.messages.append({"role": "assistant", "content": txt_final})
+            nouveau_message = {"role": "assistant", "content": txt_final}
+            if pieces_jointes_reponse:
+                nouveau_message["pieces_jointes"] = pieces_jointes_reponse
+                _afficher_pieces_jointes(pieces_jointes_reponse, prefixe_key="dl_chat")
+            st.session_state.messages.append(nouveau_message)
             st.session_state["derniere_reponse"] = txt_final
             if mode_persistant:
-                ajouter_message(st.session_state["conversation_id"], "assistant", txt_final)
+                ajouter_message(
+                    st.session_state["conversation_id"], "assistant", txt_final,
+                    pieces_jointes=pieces_jointes_reponse or None,
+                )
 
         # Sinon on utilise pas d'outil
         else:
