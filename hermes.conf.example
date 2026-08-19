@@ -27,6 +27,11 @@ response_format = json
 # Langue forcée pour la transcription (code ISO-639-1, laisser vide pour auto-détection)
 language = fr
 
+[video_url]
+# Liste blanche des domaines autorisés pour outil_transcrire_video_url (yt-dlp), séparés par des virgules.
+# Mettre "all" ou "*" pour désactiver la restriction et autoriser tous les sites (déconseillé).
+domaines_autorises = youtube.com, twitch.tv, arte.tv
+
 [image]
 # URL de base du serveur stablediffusion.cpp (API compatible OpenAI /v1/images/generations)
 base_url = http://localhost:8082

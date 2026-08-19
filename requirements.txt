@@ -27,3 +27,5 @@ fpdf2
 python-docx
 
 cachetools
+
+yt-dlp

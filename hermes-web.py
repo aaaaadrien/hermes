@@ -11,9 +11,11 @@ Lancement :
 """
 
 import json
+import re
 import configparser
 import time
 from pathlib import Path
+from typing import Optional
 
 import requests
 import streamlit as st
@@ -27,6 +29,7 @@ from hermes_tools import outils_actifs, executer_outil, ICONES_OUTILS
 # Module outil_transcrire_audio importé à part et appelé directement (pas via executer_outil)
 # il a besoin des bytes bruts du fichier joint sinon ça marche pas (a améilorer plus tard)
 from hermes_tools import outil_transcrire_audio
+from hermes_tools import _url_video_autorisee
 
 # Module de gestion des contextes système (Amphores)
 from hermes_amphores import (
@@ -683,6 +686,31 @@ for i, message in enumerate(st.session_state.messages):
         if pieces:
             _afficher_pieces_jointes(pieces, prefixe_key=f"dl_hist_{i}")
 
+_REGEX_URL = re.compile(r'https?://[^\s<>"\']+')
+
+# TODO : mettre des fonctions mieux que ça
+# TODO 2 : y a peut être plus propre que ça
+def _detecter_tool_choice_url(prompt: str, conf: configparser.ConfigParser, noms_outils_dispo: set) -> Optional[dict]:
+    """
+    Détection déterministe pour les vidéos (appel transcription video) le prompt contient une URL,
+    force l'appel du bon outil plutôt que de laisser le LLM deviner ou halluciner le contenu :
+      - URL d'un domaine vidéo whitelisté (hermes.conf [video_url]) -> outil_transcrire_video_url
+      - toute autre URL -> outil_recup_page (comme avant on suggère lecture générique de page web)
+    Retourne un dict "tool_choice" pour forcer l'appel, ou None si rien à forcer.
+    """
+    urls = _REGEX_URL.findall(prompt)
+    if not urls:
+        return None
+
+    if "outil_transcrire_video_url" in noms_outils_dispo and any(_url_video_autorisee(u, conf) for u in urls):
+        return {"type": "function", "function": {"name": "outil_transcrire_video_url"}}
+
+    if "outil_recup_page" in noms_outils_dispo:
+        return {"type": "function", "function": {"name": "outil_recup_page"}}
+
+    return None
+
+
 # Zone de saisie
 if prompt := st.chat_input("Posez votre question..."):
 
@@ -756,17 +784,31 @@ if prompt := st.chat_input("Posez votre question..."):
             st.caption(f"{label_type} joint : `{info_fichier['nom']}`")
 
     with st.chat_message("assistant"):
+        noms_outils_dispo = {o["function"]["name"] for o in outils}
+        tool_choice = _detecter_tool_choice_url(prompt, conf, noms_outils_dispo) or "auto"
         try:
             reponse = client.chat.completions.create(
                 model=model,
                 messages=st.session_state.messages,
                 tools=outils,
+                tool_choice=tool_choice,
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
-        except Exception as e:
-            st.error(f"Erreur de connexion au LLM : {e}")
-            st.stop()
+        except Exception:
+            # Si pas de support de tool_choice ciblant une fonction précice
+            # on retente sans forcer, plutôt que de planter la conversation.
+            try:
+                reponse = client.chat.completions.create(
+                    model=model,
+                    messages=st.session_state.messages,
+                    tools=outils,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+            except Exception as e:
+                st.error(f"Erreur de connexion au LLM : {e}")
+                st.stop()
 
         msg_ia = reponse.choices[0].message
 

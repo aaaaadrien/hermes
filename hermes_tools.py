@@ -18,6 +18,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
+import urllib.parse
 
 import requests
 from bs4 import BeautifulSoup
@@ -234,62 +236,6 @@ def outil_recup_page(url: str, max_chars: int = 1024000) -> str:
         return f"⚠️ Erreur lors du chargement de la page : {e}"
 
 
-# Récupère la transcription texte d'une vidéo YouTube via youtube-transcript.ai.
-def outil_youtube_transcript(url_ou_id: str, max_chars: int = 1024000) -> str:
-    """
-    Récupère la transcription d'une vidéo YouTube.
-    Accepte une URL YouTube complète (youtube.com, youtu.be, /shorts/, /embed/)
-    ou directement un identifiant vidéo (11 caractères, ex : NQyhvjtIaQw).
-
-    Paramètres :
-      url_ou_id : URL YouTube ou identifiant vidéo (ex : NQyhvjtIaQw)
-      max_chars : nombre maximum de caractères retournés (défaut 1024000, max 1024000)
-    """
-    # Extraction de l'identifiant depuis différents formats d'URL YouTube
-    video_id = url_ou_id.strip()
-    if not re.match(r'^[A-Za-z0-9_-]{11}$', video_id):
-        match = re.search(
-            r'(?:v=|youtu\.be/|/embed/|/shorts/|/live/)([A-Za-z0-9_-]{11})',
-            video_id
-        )
-        if not match:
-            return f"⚠️ Impossible d'extraire l'identifiant YouTube depuis : {url_ou_id}"
-        video_id = match.group(1)
-
-    max_chars = min(int(max_chars), 1024000)
-
-    try:
-        transcript_url = f"https://youtube-transcript.ai/transcript/{video_id}.txt"
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            )
-        }
-        resp = requests.get(transcript_url, headers=headers, timeout=15)
-        resp.raise_for_status()
-
-        texte = resp.text.strip()
-        if not texte:
-            return f"⚠️ Aucune transcription disponible pour la vidéo « {video_id} »."
-
-        if len(texte) > max_chars:
-            texte = texte[:max_chars] + f"\n\n[… transcription tronquée à {max_chars} caractères]"
-
-        return f"📺 Transcription YouTube (ID : {video_id}) :\n\n{texte}"
-
-    except requests.exceptions.Timeout:
-        return "⚠️ Délai d'attente dépassé lors de la récupération de la transcription."
-    except requests.exceptions.HTTPError as e:
-        if resp.status_code == 404:
-            return (
-                f"⚠️ Aucune transcription trouvée pour « {video_id} » "
-                f"(vidéo introuvable ou sous-titres désactivés)."
-            )
-        return f"⚠️ Erreur HTTP lors de la récupération de la transcription : {e}"
-    except Exception as e:
-        return f"⚠️ Erreur lors de la récupération de la transcription YouTube ({e})."
-
 # Extensions vidéo pour conversion en audio (via ffmpeg systeme) avant envoi à whisper.cpp
 _EXTENSIONS_VIDEO = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
 
@@ -444,6 +390,160 @@ def outil_transcrire_audio(donnees: bytes, nom_fichier: str, conf: configparser.
         return f"⚠️ Erreur lors de la transcription audio : {e}"
 
 
+def _extraire_id_youtube(url_ou_id: str) -> Optional[str]:
+    """
+    Extrait l'identifiant vidéo YouTube d'une URL
+    """
+    video_id = url_ou_id.strip()
+    if re.match(r'^[A-Za-z0-9_-]{11}$', video_id):
+        return video_id
+    match = re.search(r'(?:v=|youtu\.be/|/embed/|/shorts/|/live/)([A-Za-z0-9_-]{11})', video_id)
+    return match.group(1) if match else None
+
+def _transcript_youtube_rapide(video_id: str, max_chars: int = 1024000) -> Optional[str]:
+    """
+    Tente de récupérer directement la transcription texte d'une vidéo YouTube via
+    youtube-transcript.ai (rapide, pas de téléchargement ni de whisper.cpp nécessaire).
+    Retourne None si indisponible (vidéo sans sous-titres, erreur réseau, etc.),
+    auquel cas outil_transcrire_video_url se rabat sur yt-dlp + whisper.cpp.
+    """
+    try:
+        transcript_url = f"https://youtube-transcript.ai/transcript/{video_id}.txt"
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+                "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+            )
+        }
+        resp = requests.get(transcript_url, headers=headers, timeout=15)
+        resp.raise_for_status()
+        texte = resp.text.strip()
+        if not texte:
+            return None
+        max_chars = min(int(max_chars), 1024000)
+        if len(texte) > max_chars:
+            texte = texte[:max_chars] + f"\n\n[… transcription tronquée à {max_chars} caractères]"
+        return texte
+    except Exception:
+        return None
+
+def _url_video_autorisee(url: str, conf: configparser.ConfigParser) -> bool:
+    """
+    Vérifie l'URL contre la liste blanche [video_url] domaines_autorises de hermes.conf.
+    Vérification faite ici (côté serveur), pas seulement dans la description du tool, pour empêcher
+    le LLM (ou un prompt injecté) de faire télécharger une URL arbitraire via yt-dlp.
+    "all" ou "*" dans domaines_autorises désactive la liste blanche (tous les sites autorisés).
+    """
+    domaines_brut = conf.get("video_url", "domaines_autorises", fallback="")
+    domaines = [d.strip().lower() for d in domaines_brut.split(",") if d.strip()]
+    if "all" in domaines or "*" in domaines:
+        return True
+    if not domaines:
+        return False
+    try:
+        hote = urllib.parse.urlparse(url).netloc.lower()
+    except ValueError:
+        return False
+    hote = hote.split("@")[-1].split(":")[0]  # retire d'éventuels user@ ou :port
+    return any(hote == d or hote.endswith("." + d) for d in domaines)
+
+
+def outil_transcrire_video_url(url: str, conf: configparser.ConfigParser,
+                                ignorer_debut_secondes: float = 0, ignorer_fin_secondes: float = 0) -> str:
+    """
+    Transcrit en texte une vidéo hébergée en ligne, restreinte aux domaines listés dans
+    hermes.conf ([video_url] domaines_autorises).
+
+    Deux chemins possibles :
+      1. Rapide : si l'URL est une vidéo YouTube et que des sous-titres sont disponibles,
+         la transcription est récupérée directement via youtube-transcript.ai — pas de
+         téléchargement ni de whisper.cpp nécessaire.
+      2. Générique : sinon (ou si le chemin rapide échoue), la piste audio est téléchargée
+         via yt-dlp, normalisée via _extraire_audio_ffmpeg (mêmes optimisations ffmpeg que
+         pour un fichier audio uploadé : silences retirés, découpe début/fin, etc.), puis
+         transcrite via whisper.cpp (outil_transcrire_audio).
+
+    Paramètres :
+      url                      : URL de la vidéo (doit appartenir à un domaine autorisé)
+      conf                     : configuration ([whisper] et [video_url] de hermes.conf)
+      ignorer_debut_secondes   : si > 0, coupe ce nombre de secondes au début avant transcription
+                                 (ignoré pour le chemin rapide YouTube, qui renvoie la transcription complète)
+      ignorer_fin_secondes     : si > 0, coupe ce nombre de secondes à la fin avant transcription
+
+    Nécessite que le binaire `yt-dlp` soit installé et accessible dans le PATH (ou module python installé dans).
+
+    Configuration attendue dans hermes.conf :
+        [video_url]
+        domaines_autorises = youtube.com, twitch.tv, arte.tv
+    """
+    if not url or not url.strip():
+        return "⚠️ Aucune URL fournie."
+    url = url.strip()
+
+    if not _url_video_autorisee(url, conf):
+        domaines_brut = conf.get("video_url", "domaines_autorises", fallback="")
+        return (
+            "⚠️ Ce site n'est pas autorisé pour la transcription vidéo. "
+            f"Domaines autorisés : {domaines_brut or '(aucun configuré)'}."
+        )
+
+    # Chemin rapide : YouTube avec sous-titres disponibles
+    video_id = _extraire_id_youtube(url)
+    if video_id and ignorer_debut_secondes == 0 and ignorer_fin_secondes == 0:
+        rapide = _transcript_youtube_rapide(video_id)
+        if rapide:
+            return f"📺 Transcription YouTube (ID : {video_id}) :\n\n{rapide}"
+        # Pas de sous-titres ou erreur : on continue avec le chemin générique ci-dessous
+
+    # Chemin générique : téléchargement audio (yt-dlp) puis transcription (ffmpeg + whisper.cpp)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        motif_sortie = os.path.join(tmp_dir, "audio.%(ext)s")
+        try:
+            resultat = subprocess.run(
+                [
+                    "yt-dlp",
+                    "-x", "--audio-format", "wav", "--audio-quality", "0",
+                    "-o", motif_sortie,
+                    url,
+                ],
+                capture_output=True, timeout=1800,
+            )
+        except FileNotFoundError:
+            return "⚠️ yt-dlp n'est pas installé (ou introuvable dans le PATH)."
+        except subprocess.TimeoutExpired:
+            return "⚠️ Délai d'attente dépassé lors du téléchargement de la vidéo (yt-dlp)."
+
+        if resultat.returncode != 0:
+            erreur = resultat.stderr.decode("utf-8", errors="replace")[-500:]
+            return f"⚠️ Échec du téléchargement de la vidéo (yt-dlp) : {erreur}"
+
+        fichiers = [f for f in os.listdir(tmp_dir) if f.startswith("audio.")]
+        if not fichiers:
+            return "⚠️ yt-dlp n'a produit aucun fichier audio exploitable."
+        nom_fichier = fichiers[0]
+        chemin_audio = os.path.join(tmp_dir, nom_fichier)
+
+        try:
+            with open(chemin_audio, "rb") as f:
+                donnees = f.read()
+        except OSError as e:
+            return f"⚠️ Erreur lors de la lecture du fichier audio téléchargé : {e}"
+
+        # Normalisation via _extraire_audio_ffmpeg (silences retirés, découpe début/fin, mono 16 kHz)
+        try:
+            donnees = _extraire_audio_ffmpeg(
+                donnees, nom_fichier,
+                ignorer_debut_secondes=ignorer_debut_secondes,
+                ignorer_fin_secondes=ignorer_fin_secondes,
+            )
+            nom_fichier = Path(nom_fichier).stem + ".wav"
+        except FileNotFoundError:
+            return "⚠️ ffmpeg n'est pas installé (ou introuvable dans le PATH)."
+        except Exception as e:
+            return f"⚠️ Erreur lors du traitement audio (ffmpeg) : {e}"
+
+        # Audio déjà normalisé/découpé : on passe ignorer_debut/fin=0 pour éviter un second passage ffmpeg
+        return outil_transcrire_audio(donnees, nom_fichier, conf)
 
 
 # Génère une image à partir d'un prompt texte via un serveur stablediffusion.cpp local.
@@ -785,35 +885,6 @@ CATALOGUE_OUTILS = [
     {
         "type": "function",
         "function": {
-            "name": "outil_youtube_transcript",
-            "description": (
-                "Récupère la transcription textuelle complète d'une vidéo YouTube. "
-                "Utilise cet outil quand l'utilisateur fournit un lien YouTube ou un identifiant "
-                "vidéo et souhaite lire, résumer, traduire ou analyser son contenu."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url_ou_id": {
-                        "type": "string",
-                        "description": (
-                            "URL complète YouTube (youtube.com/watch?v=…, youtu.be/…, /shorts/…) "
-                            "ou identifiant vidéo seul (11 caractères, ex : NQyhvjtIaQw)."
-                        ),
-                    },
-                    "max_chars": {
-                        "type": "integer",
-                        "description": "Nombre maximum de caractères à retourner (défaut 1024000, max 1024000).",
-                        "default": 1024000,
-                    },
-                },
-                "required": ["url_ou_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "outil_datetime",
             "description": "Retourne la date et l'heure actuelles (horloge locale du serveur).",
             "parameters": {"type": "object", "properties": {}, "required": []},
@@ -921,6 +992,45 @@ CATALOGUE_OUTILS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "outil_transcrire_video_url",
+            "description": (
+                "Récupère le contenu textuel (transcription) d'une vidéo en ligne à partir de son URL. "
+                "IMPORTANT : le modèle n'a AUCUN moyen de connaître le contenu d'une vidéo à partir de "
+                "sa seule URL, dès qu'un message contient un lien vers une vidéo (YouTube, Twitch, "
+                "Dailymotion, Arte, etc., peu importe qu'il soit collé seul ou dans une phrase), cet outil "
+                "DOIT être appelé en premier pour en récupérer le contenu, AVANT de répondre à la demande "
+                "de l'utilisateur (résumer, analyser, traduire, répondre à une question, extraire des "
+                "infos...), même si l'utilisateur ne mentionne pas explicitement les mots « transcrire » "
+                "ou « extraire ». Ne jamais deviner ou halluciner le contenu d'une vidéo à partir de son URL. "
+                "Pour YouTube, l'outil utilise en priorité la transcription/les sous-titres officiels quand "
+                "disponibles (rapide) ; sinon, il télécharge la piste audio et la transcrit via whisper.cpp. "
+                "Si l'utilisateur demande de retirer une partie du début ou de la fin (par ex. "
+                "« enlève les 5 premières minutes »), convertis sa demande en secondes et renseigne "
+                "ignorer_debut_secondes et/ou ignorer_fin_secondes en conséquence."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "URL de la vidéo (doit appartenir à un domaine autorisé par le serveur, ex : YouTube, Twitch, Arte).",
+                    },
+                    "ignorer_debut_secondes": {
+                        "type": "number",
+                        "description": "Secondes à couper au début avant transcription (0 par défaut).",
+                    },
+                    "ignorer_fin_secondes": {
+                        "type": "number",
+                        "description": "Secondes à couper à la fin avant transcription (0 par défaut).",
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
 ]
 
 # Emojis d'affichage (utilisés dans l'interface web)
@@ -930,10 +1040,10 @@ ICONES_OUTILS = {
     "outil_argent":             "💱 Change",
     "outil_duckduckgo":         "🔍 Recherche web",
     "outil_recup_page":         "🌐 Lecture page",
-    "outil_youtube_transcript": "📺 Transcript YouTube",
     "outil_datetime":           "🕐 Date & Heure",
     "outil_generer_fichier":    "💾 Génération fichier",
     "outil_transcrire_audio":   "🎙️ Transcription audio/vidéo",
+    "outil_transcrire_video_url": "📡 Transcription vidéo (URL)",
     "outil_generation_image":   "🎨 Génération d'image",
 }
 
@@ -948,10 +1058,10 @@ def outils_actifs(conf: configparser.ConfigParser) -> list:
         "enable_argent":            "outil_argent",
         "enable_duckduckgo":        "outil_duckduckgo",
         "enable_recup_page":        "outil_recup_page",
-        "enable_youtube_transcript":"outil_youtube_transcript",
         "enable_datetime":          "outil_datetime",
         "enable_generer_fichier":   "outil_generer_fichier",
         "enable_transcrire_audio":  "outil_transcrire_audio",
+        "enable_transcrire_video_url": "outil_transcrire_video_url",
         "enable_generation_image": "outil_generation_image",
     }
     actifs = []
@@ -973,8 +1083,6 @@ def executer_outil(nom: str, args: dict, conf: configparser.ConfigParser = None)
         return outil_duckduckgo(args["query"], args.get("num_results", 10))
     elif nom == "outil_recup_page":
         return outil_recup_page(args["url"], args.get("max_chars", 1024000))
-    elif nom == "outil_youtube_transcript":
-        return outil_youtube_transcript(args["url_ou_id"], args.get("max_chars", 1024000))
     elif nom == "outil_datetime":
         return outil_datetime()
     elif nom == "outil_generer_fichier":
@@ -984,5 +1092,10 @@ def executer_outil(nom: str, args: dict, conf: configparser.ConfigParser = None)
     elif nom == "outil_transcrire_audio":
         # Intercepté en amiont par hermes-web, ce cas est déclencé si jamais on utilise l'outil depuis la CLI
         return "⚠️ Aucun fichier audio/vidéo joint : cet outil nécessite un fichier attaché depuis l'interface web."
+    elif nom == "outil_transcrire_video_url":
+        return outil_transcrire_video_url(
+            args["url"], conf,
+            ignorer_debut_secondes=args.get("ignorer_debut_secondes", 0) or 0,
+            ignorer_fin_secondes=args.get("ignorer_fin_secondes", 0) or 0,
+        )
     return f"⚠️ Outil inconnu : « {nom} »."
-
