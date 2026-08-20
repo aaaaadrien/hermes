@@ -897,6 +897,42 @@ if prompt := st.chat_input("Posez votre question..."):
                     st.error(txt_final)
                     st.stop()
 
+                # TODO y a peut être mieux opur fixer le pb de tool call de Qwen3.8
+                # certains modèles (comme Qwen) hallucinent parfois un bloc
+                # <tool_call>...</tool_call> en texte brut au lieu de rédiger une réponse en
+                # langage naturel, alors que l'outil a déjà été exécuté
+                # On détecte ce cas et on relance UNE fois la synthèse avec un rappel explicite.
+                if "<tool_call>" in txt_final:
+                    try:
+                        messages_retry = st.session_state.messages + [{
+                            "role": "system",
+                            "content": (
+                                "Rappel : les outils nécessaires ont déjà été exécutés et leurs résultats "
+                                "sont disponibles ci-dessus (messages de rôle 'tool'). N'appelle plus aucun "
+                                "outil et ne génère surtout pas de balise <tool_call>. Réponds uniquement "
+                                "en langage naturel, en te basant sur les résultats déjà obtenus."
+                            ),
+                        }]
+                        final_retry = client.chat.completions.create(
+                            model=model,
+                            messages=messages_retry,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                        )
+                        txt_retry = final_retry.choices[0].message.content or ""
+                        if txt_retry.strip() and "<tool_call>" not in txt_retry:
+                            txt_final = txt_retry
+                        else:
+                            # Le modèle persiste : on nettoie le texte brut plutôt que de l'afficher tel quel et on formule un beau texte
+                            txt_final = re.sub(r"<tool_call>.*?</tool_call>", "", txt_final, flags=re.DOTALL).strip()
+                            if not txt_final:
+                                txt_final = (
+                                    "⚠️ Le modèle n'a pas réussi à formuler une réponse en langage naturel."
+                                )
+                    except Exception:
+                        txt_final = re.sub(r"<tool_call>.*?</tool_call>", "", txt_final, flags=re.DOTALL).strip()
+            # Fin gestion tool_call
+
             st.markdown(txt_final)
             #txt_final = st.write_stream(final)  # TODO BUG STREAM
             nouveau_message = {"role": "assistant", "content": txt_final}

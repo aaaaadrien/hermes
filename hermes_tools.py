@@ -239,24 +239,29 @@ def outil_recup_page(url: str, max_chars: int = 1024000) -> str:
 # Extensions vidéo pour conversion en audio (via ffmpeg systeme) avant envoi à whisper.cpp
 _EXTENSIONS_VIDEO = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
 
-
-def _extraire_audio_ffmpeg(donnees: bytes, nom_fichier: str, ignorer_debut_secondes: float = 0,
-                            ignorer_fin_secondes: float = 0) -> bytes:
+def _extraire_audio_ffmpeg(donnees: bytes = None, nom_fichier: str = "audio.mp4",
+                            ignorer_debut_secondes: float = 0, ignorer_fin_secondes: float = 0,
+                            chemin_in: Optional[str] = None) -> bytes:
     """
     Extrait la piste audio d'un fichier vidéo et la convertit en WAV mono 16 kHz
     (format standard attendu par whisper.cpp) via ffmpeg.
     Note : on supprime les silences et accélère un peu l'audio (plus rapide à traiter)
 
+    donnees                : contenu binaire du fichier source (bytes). Ignoré si chemin_in
+                             ext fourni (gain de place et évite une copue)
+    nom_fichier            : nom original du fichier (utilisé pour déduire l'extension source)
     ignorer_debut_secondes : si > 0, coupe ce nombre de secondes au début du fichier
                              (pour pas traiter une intro de live)
     ignorer_fin_secondes   : si > 0, coupe ce nombre de secondes à la fin du fichier
 
     Nécessite que le binaire `ffmpeg` soit installé et accessible dans le PATH.
     """
-    suffixe_in = Path(nom_fichier).suffix or ".mp4"
-    with tempfile.NamedTemporaryFile(suffix=suffixe_in, delete=False) as f_in:
-        f_in.write(donnees)
-        chemin_in = f_in.name
+    fichier_in_temporaire = chemin_in is None
+    if chemin_in is None:
+        suffixe_in = Path(nom_fichier).suffix or ".mp4"
+        with tempfile.NamedTemporaryFile(suffix=suffixe_in, delete=False) as f_in:
+            f_in.write(donnees)
+            chemin_in = f_in.name
     chemin_out = chemin_in + ".wav"
 
     try:
@@ -283,7 +288,10 @@ def _extraire_audio_ffmpeg(donnees: bytes, nom_fichier: str, ignorer_debut_secon
         with open(chemin_out, "rb") as f_out:
             return f_out.read()
     finally:
-        for chemin in (chemin_in, chemin_out):
+        chemins_a_supprimer = [chemin_out]
+        if fichier_in_temporaire:
+            chemins_a_supprimer.append(chemin_in)
+        for chemin in chemins_a_supprimer:
             try:
                 os.remove(chemin)
             except OSError:
@@ -502,7 +510,6 @@ def outil_transcrire_video_url(url: str, conf: configparser.ConfigParser,
             resultat = subprocess.run(
                 [
                     "yt-dlp",
-                    "-x", "--audio-format", "wav", "--audio-quality", "0",
                     "-o", motif_sortie,
                     url,
                 ],
@@ -523,16 +530,12 @@ def outil_transcrire_video_url(url: str, conf: configparser.ConfigParser,
         nom_fichier = fichiers[0]
         chemin_audio = os.path.join(tmp_dir, nom_fichier)
 
-        try:
-            with open(chemin_audio, "rb") as f:
-                donnees = f.read()
-        except OSError as e:
-            return f"⚠️ Erreur lors de la lecture du fichier audio téléchargé : {e}"
-
         # Normalisation via _extraire_audio_ffmpeg (silences retirés, découpe début/fin, mono 16 kHz)
+        # chemin_in=chemin_audio : ffmpeg lit directement le fichier déjà écrit par yt-dlp sur
+        # disque, sans le recopier en mémoire ni le réécrire dans un fichier temporaire supplémentaire.
         try:
             donnees = _extraire_audio_ffmpeg(
-                donnees, nom_fichier,
+                chemin_in=chemin_audio, nom_fichier=nom_fichier,
                 ignorer_debut_secondes=ignorer_debut_secondes,
                 ignorer_fin_secondes=ignorer_fin_secondes,
             )
