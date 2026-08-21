@@ -1,6 +1,8 @@
 __*
 TODO.md
 hermes-amphores.json
+hermes-users.db
+hermes.db
 hermes.conf
 *.old
 venv
