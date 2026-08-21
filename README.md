@@ -46,6 +46,7 @@ pip install -r requirements.txt
 - Gestion XLS : openpyxl
 - Gestion ODS/ODT/ODP : odfpy + tabulate
 - Gestion DOCX : python-docx
+- Téléchargement en ligne de vidéos : yt-dlp
 - Divers : cachetools
 
 ## Upload de fichier audio / vidéo (transcription à la demande)
@@ -67,6 +68,35 @@ Dans le cadre de RHEL et clones, ffmpeg est dispo dans RPM Fusion Free :
 sudo dnf install --nogpgcheck https://dl.fedoraproject.org/pub/epel/epel-release-latest-$(rpm -E %rhel).noarch.rpm
 sudo dnf install --nogpgcheck https://mirrors.rpmfusion.org/free/el/rpmfusion-free-release-$(rpm -E %rhel).noarch.rpm
 ```
+
+_Note :_ Pour améliorer la rapidité de traitement, silences retirés, découpe début/fin sur demande
+
+## Transcription de vidéos en ligne (YouTube, Twitch, etc. via yt-dlp)
+
+En plus des fichiers uploadés, le LLM peut transcrire directement une vidéo à partir de son **URL**, grâce à l'outil `outil_transcrire_video_url`. Il suffit de coller un lien vidéo dans le message (avec ou sans consigne explicite, ex : *"résume-moi cette vidéo : https://..."*) pour que l'outil soit déclenché automatiquement.
+
+Deux chemins possibles selon le site :
+- **Rapide (YouTube uniquement)** : si des sous-titres/transcription officiels sont disponibles, ils sont récupérés directement (pas de téléchargement, pas de whisper.cpp).
+- **Générique (tous les sites pris en charge)** : la piste **audio uniquement** est téléchargée via **yt-dlp**, normalisée via ffmpeg, puis transcrite via whisper.cpp.
+
+Cet outil est activable/désactivable comme les autres dans `hermes.conf` :
+```ini
+[tools]
+enable_transcrire_video_url = true
+```
+
+`yt-dlp` doit être installé et accessible dans le `PATH` (inclus dans `requirements.txt`). `ffmpeg` est également nécessaire (voir section précédente).
+
+Par sécurité, seuls les domaines explicitement autorisés peuvent être utilisés avec cet outil, la vérification est faite côté serveur, pas seulement dans la description donnée au LLM, pour empêcher un prompt malveillant de faire télécharger une URL arbitraire :
+
+```ini
+[video_url]
+# Domaines autorisés, séparés par des virgules.
+# Mettre "all" ou "*" pour désactiver la restriction et autoriser tous les sites (déconseillé).
+domaines_autorises = youtube.com, twitch.tv, arte.tv
+```
+
+_Note :_ Pour améliorer la rapidité de traitement, silences retirés, découpe début/fin sur demande
 
 ## Génération d'image
 
@@ -91,6 +121,39 @@ L'image générée s'affiche directement dans la conversation (interface web), a
 
 _Note :_ La taille de l'image peut être demandée explicitement, mais attention, plus la résolution demandée est grande, plus la génération sera longue (et le serveur Stable Diffusion s'il est autohébergé, devra avoir assez de ressources)
 
+
+## Amphores : contextes système personnalisés (interface web)
+
+Une **amphore** est un contexte préconfiguré : un nom, une description optionnelle, et surtout un **prompt système** qui remplace celui défini par défaut dans `hermes.conf`. C'est un moyen rapide de changer le comportement de l'IA (ex : "Expert Python", "Correcteur orthographique", "Traducteur Anglais vers Français"...) sans éditer la configuration ni redémarrer le serveur.
+
+Dans l'interface web, un menu déroulant dans la sidebar permet de choisir l'amphore active : le changement s'applique immédiatement au message système de la conversation en cours, sans réinitialiser l'historique (seul le bouton "Effacer la conversation" le fait).
+
+### Deux origines d'amphores
+
+- **Globales** : partagées par tout le monde, stockées dans `hermes.db`. Une amphore "Par défaut" existe toujours (reprend le `system_prompt` de `hermes.conf`) et ne peut pas être supprimée ni modifiée.
+- **Perso** : propres à chaque utilisateur authentifié, stockées dans `hermes.db`. Invisibles et non modifiables par les autres utilisateurs. Nécessitent donc `[auth] authentification = userpass`.
+
+Dans le sélecteur, les amphores globales sont préfixées 🌐 et les perso 👤, globales affichées en premier.
+
+### Configuration (`hermes.conf`, section `[amphores]`)
+
+```ini
+[amphores]
+# Visibilité des amphores dans l'interface :
+# disabled : amphores non disponibles (défaut)
+# user     : disponibles uniquement pour les utilisateurs authentifiés
+# all      : disponibles pour tout le monde, authentifié ou non
+mode = disabled
+
+# Mot de passe pour déverrouiller la création/modification/suppression des amphores
+# GLOBALES depuis l'interface (commande /amphores <mdp> dans le chat).
+# Laisser vide = édition toujours affichée par défaut (pas de protection).
+editpasswd = MDP
+```
+
+_Notes :_ les amphores globales sont consultables mais pas modifiables depuis l'interface. Pour afficher le menu de modification des amphores : commande `/amphores <mdp>` dans le chat.
+
+
 ## Comptes utilisateurs & historique des conversations (interface web)
 
 **EXPERIMENTAL NE PAS ENCORE UTILISER**
@@ -110,7 +173,7 @@ Chaque session de navigateur repart de zéro.
 
 ### `authentification = userpass`
 
-Active la gestion de comptes (utilisateur/mot de passe) et la sauvegarde des conversations, stockées dans **`hermes-users.db`** (base SQLite créée automatiquement au premier lancement, aucun serveur de base de données externe requis).
+Active la gestion de comptes (utilisateur/mot de passe) et la sauvegarde des conversations, stockées dans **`hermes.db`** (base SQLite créée automatiquement au premier lancement, aucun serveur de base de données externe requis).
 
 Une fois connecté, chaque échange est automatiquement enregistré. La sidebar propose de lister, reprendre, renommer et supprimer ses conversations. 
 

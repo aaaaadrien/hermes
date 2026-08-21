@@ -4,11 +4,10 @@ hermes_amphores.py
 Gestion des contextes système (Amphores) pour Hermes.
 Chaque contexte définit un nom, une description et un prompt système.
 
-Deux origines possibles :
-- Amphores globales : partagées par tout le monde, stockage persistant dans
-  hermes-amphores.json (créé automatiquement).
-- Amphores perso : propres à un utilisateur authentifié, stockage persistant
-  dans hermes-users.db (table amphores_perso, via hermes_accounts.get_connection).
+Deux origines possibles, toutes deux stockées dans hermes.db (SQLite, via
+hermes_accounts.get_connection) :
+- Amphores globales : partagées par tout le monde, table amphores_global.
+- Amphores perso : propres à un utilisateur authentifié, table amphores_perso.
   Nécessitent donc [auth] authentification = userpass.
 
 Importé par hermes-web.py.
@@ -22,14 +21,11 @@ Utilisation :
     )
 """
 
-import json
 import re
 import time
-from pathlib import Path
 from typing import Optional
 
-FICHIER_AMPHORES = Path("hermes-amphores.json")
-ID_DEFAUT        = "defaut"
+ID_DEFAUT = "defaut"
 
 
 # Helpers internes
@@ -49,29 +45,74 @@ def _amphore_defaut(sys_prompt: str) -> dict:
     }
 
 
-# API publique pour Amphores globales (JSON)
+def _connexion_global():
+    """
+    Ouvre la connexion partagée (hermes.db) et s'assure que la table
+    amphores_global existe. Import différé de hermes_accounts pour ne pas
+    imposer cette dépendance (sqlite3, extra_streamlit_components...) inutilement.
+    """
+    from hermes_accounts import get_connection
+    con = get_connection()
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS amphores_global (
+            id            TEXT PRIMARY KEY,
+            nom           TEXT NOT NULL,
+            description   TEXT,
+            system_prompt TEXT NOT NULL,
+            created_at    INTEGER NOT NULL
+        )
+    """)
+    con.commit()
+    return con
+
+
+# API publique pour Amphores globales (SQLite, table amphores_global)
 
 def charger_amphores(sys_prompt_conf: str) -> list[dict]:
     """
-    Charge les amphores globales depuis hermes-amphores.json.
-    Si le fichier n'existe pas, le crée avec une amphore 'Par défaut'
-    dont le prompt est celui de hermes.conf.
+    Charge les amphores globales depuis hermes.db.
+    Si aucune amphore 'Par défaut' n'existe encore, la crée avec le prompt de hermes.conf.
     """
-    if not FICHIER_AMPHORES.exists():
-        amphores = [_amphore_defaut(sys_prompt_conf)]
-        sauvegarder_amphores(amphores)
-        return amphores
+    con = _connexion_global()
     try:
-        with open(FICHIER_AMPHORES, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return [_amphore_defaut(sys_prompt_conf)]
+        lignes = con.execute(
+            "SELECT id, nom, description, system_prompt FROM amphores_global ORDER BY created_at ASC"
+        ).fetchall()
+        amphores = [dict(l) for l in lignes]
+    finally:
+        con.close()
+
+    if not any(a["id"] == ID_DEFAUT for a in amphores):
+        amphores = [_amphore_defaut(sys_prompt_conf)] + amphores
+        sauvegarder_amphores(amphores)
+    return amphores
 
 
 def sauvegarder_amphores(amphores: list[dict]) -> None:
-    """Persiste la liste complète des amphores globales dans hermes-amphores.json."""
-    with open(FICHIER_AMPHORES, "w", encoding="utf-8") as f:
-        json.dump(amphores, f, ensure_ascii=False, indent=2)
+    """
+    Persiste la liste complète des amphores globales dans hermes.db (synchronisation
+    complète : insère/actualise chaque amphore de la liste, supprime celles absentesn
+    même sémantique que l'ancien remplacement intégral du fichier JSON).
+    """
+    con = _connexion_global()
+    try:
+        ids_conserves = [a["id"] for a in amphores]
+        if ids_conserves:
+            placeholders = ",".join("?" * len(ids_conserves))
+            con.execute(f"DELETE FROM amphores_global WHERE id NOT IN ({placeholders})", ids_conserves)
+        else:
+            con.execute("DELETE FROM amphores_global")
+        for a in amphores:
+            con.execute(
+                "INSERT INTO amphores_global (id, nom, description, system_prompt, created_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET nom=excluded.nom, description=excluded.description, "
+                "system_prompt=excluded.system_prompt",
+                (a["id"], a["nom"], a.get("description", ""), a["system_prompt"], int(time.time())),
+            )
+        con.commit()
+    finally:
+        con.close()
 
 
 def amphore_par_id(amphores: list[dict], amphore_id: str) -> Optional[dict]:
@@ -80,7 +121,8 @@ def amphore_par_id(amphores: list[dict], amphore_id: str) -> Optional[dict]:
 
 
 def creer_amphore(nom: str, system_prompt: str, description: str = "") -> dict:
-    """Crée une nouvelle amphore globale avec un identifiant unique."""
+    """Crée une nouvelle amphore globale avec un identifiant unique (pas encore persistée :
+    à ajouter à la liste puis passer à sauvegarder_amphores)."""
     return {
         "id":            _amphore_id_depuis_nom(nom),
         "nom":           nom.strip(),
@@ -91,8 +133,8 @@ def creer_amphore(nom: str, system_prompt: str, description: str = "") -> dict:
 
 def mettre_a_jour_amphore(amphores: list[dict], amphore_id: str, **champs) -> list[dict]:
     """
-    Met à jour les champs d'une amphore globale existante.
-    Retourne une nouvelle liste (non-mutante).
+    Met à jour les champs d'une amphore globale existante dans une liste en mémoire.
+    Retourne une nouvelle liste (non-mutante), à persister ensuite via sauvegarder_amphores.
     """
     return [
         {**a, **champs} if a["id"] == amphore_id else a
@@ -102,19 +144,20 @@ def mettre_a_jour_amphore(amphores: list[dict], amphore_id: str, **champs) -> li
 
 def supprimer_amphore(amphores: list[dict], amphore_id: str) -> list[dict]:
     """
-    Supprime une amphore globale par son id.
+    Supprime une amphore globale par son id dans une liste en mémoire.
     L'amphore 'defaut' est protégée et ne peut pas être supprimée.
+    Retourne une nouvelle liste, à persister ensuite via sauvegarder_amphores.
     """
     if amphore_id == ID_DEFAUT:
         return amphores
     return [a for a in amphores if a["id"] != amphore_id]
 
 
-# API publique pour Amphores personnelles (SQLite, par utilisateur authentifié)
+# API publique pour Amphores personnelles (SQLite, table amphores_perso, par utilisateur authentifié)
 
 def _connexion_perso():
     """
-    Ouvre la connexion partagée (hermes-users.db) et s'assure que la table
+    Ouvre la connexion partagée (hermes.db) et s'assure que la table
     amphores_perso existe. Import différé de hermes_accounts pour ne pas
     imposer cette dépendance (sqlite3, extra_streamlit_components...) quand
     l'authentification est désactivée ([auth] authentification = none).

@@ -2,7 +2,7 @@
 hermes_accounts.py
 ====================
 Gestion des comptes utilisateurs pour Hermes (mode `authentification = userpass`)
-Stockage persistant dans hermes-users.db (SQLite, créé automatiquement, voir en dessous)
+Stockage persistant dans hermes.db (SQLite, créé automatiquement, voir en dessous)
 Cette base contient aussi les tables des conversations (voir hermes_conversations.py)
 et des sessions de connexion persistantes, qui réutilisent la connexion définie ici
 
@@ -30,7 +30,7 @@ from typing import Optional
 import extra_streamlit_components as stx
 import streamlit as st
 
-FICHIER_DB = Path("hermes-users.db")
+FICHIER_DB = Path("hermes.db")
 ITERATIONS_PBKDF2 = 200_000
 NOM_COOKIE = "hermes_session"
 DUREE_SESSION_JOURS = 30
@@ -40,7 +40,7 @@ DUREE_SESSION_JOURS = 30
 
 def get_connection() -> sqlite3.Connection:
     """
-    Ouvre (et crée la première fois) hermes-users.db avec le schéma complet
+    Ouvre (et crée la première fois) hermes.db avec le schéma complet
     (users, conversations, messages).
     BDD sqlite3 parce que pas un usage intensif et plus facile a gérer qu'un mariadb
     TODO a voir dans le temps la pertinence
