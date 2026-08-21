@@ -132,6 +132,38 @@ def creer_compte(username: str, mdp: str) -> tuple[bool, str]:
     finally:
         con.close()
 
+# fonction changer le mot de passe d'un compte existant
+def changer_mot_de_passe(user_id: int, mdp_actuel: str, nouveau_mdp: str) -> tuple[bool, str]:
+    """
+    Change le mot de passe d'un compte, après vérification du mot de passe actuel.
+    Retourne (succès, message).
+    """
+    if len(nouveau_mdp) < 6:
+        return False, "Le nouveau mot de passe doit faire au moins 6 caractères."
+
+    con = get_connection()
+    try:
+        ligne = con.execute(
+            "SELECT password_hash, salt FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if not ligne:
+            return False, "Compte introuvable."
+
+        h_actuel, _ = _hash_mdp(mdp_actuel, ligne["salt"])
+        if h_actuel != ligne["password_hash"]:
+            return False, "Mot de passe actuel incorrect."
+
+        h_nouveau, sel_nouveau = _hash_mdp(nouveau_mdp)
+        con.execute(
+            "UPDATE users SET password_hash = ?, salt = ? WHERE id = ?",
+            (h_nouveau, sel_nouveau, user_id),
+        )
+        con.commit()
+        return True, "Mot de passe modifié avec succès."
+    finally:
+        con.close()
+
+
 # fonction vérif un compte
 def verifier_identifiants(username: str, mdp: str) -> Optional[dict]:
     """
@@ -247,7 +279,7 @@ def ecran_connexion(cookie_manager: stx.CookieManager, register: bool = False) -
 
         c1, c2 = st.columns(2)
         if c1.button("Se déconnecter", use_container_width=True, type="primary"):
-            _deconnexion_effective(cookie_manager)
+            deconnexion_effective(cookie_manager)
             st.rerun()
         if c2.button("Annuler", use_container_width=True):
             st.session_state.pop("auth_afficher_deconnexion", None)
@@ -314,7 +346,7 @@ def ecran_connexion(cookie_manager: stx.CookieManager, register: bool = False) -
     st.stop()
 
 
-def _deconnexion_effective(cookie_manager: stx.CookieManager) -> None:
+def deconnexion_effective(cookie_manager: stx.CookieManager) -> None:
     """
     Effectue réellement la déconnexion : révoque la session en base, supprime
     le cookie, et nettoie st.session_state. Appelée uniquement depuis l'écran

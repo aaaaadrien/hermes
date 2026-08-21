@@ -274,7 +274,7 @@ st.set_page_config(page_title=page_title, page_icon=page_icon, layout="wide")
 
 # Import des modules comptes et conversations (uniquement si authentification différent de none)
 if authentification == "userpass":
-    from hermes_accounts import ecran_connexion, obtenir_cookie_manager
+    from hermes_accounts import ecran_connexion, obtenir_cookie_manager, changer_mot_de_passe, deconnexion_effective
     from hermes_conversations import ajouter_message, creer_conversation, vider_conversation, widget_conversations
     cookie_manager = obtenir_cookie_manager()  # une seule instance par run, réutilisée pour connexion/déconnexion
     utilisateur = ecran_connexion(cookie_manager, register)   # affiche l'écran de connexion, ou None si mode anonyme
@@ -596,13 +596,40 @@ with st.sidebar:
             vider_conversation(st.session_state["conversation_id"])
         st.rerun()
 
-    # Bouton Connexion Déconnexion (uniquement si authentification = userpass)
+    # Bouton Connexion / Profil (uniquement si authentification = userpass)
     if authentification == "userpass":
         st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
         if mode_persistant:
-            if st.button("🚪 Déconnexion", use_container_width=True):
-                st.session_state["auth_afficher_deconnexion"] = True
-                st.rerun()
+
+            @st.dialog("👤 Profil")
+            def _dialog_profil():
+                st.caption(f"Connecté en tant que **{utilisateur['username']}**")
+
+                st.markdown("**🔑 Changer mon mot de passe**")
+                mdp_actuel = st.text_input("Mot de passe actuel", type="password", key="cmdp_actuel")
+                mdp_nouveau = st.text_input("Nouveau mot de passe", type="password", key="cmdp_nouveau")
+                mdp_confirme = st.text_input("Confirmer le nouveau mot de passe", type="password", key="cmdp_confirme")
+                if st.button("💾 Valider", use_container_width=True):
+                    if mdp_nouveau != mdp_confirme:
+                        st.error("❌ Les nouveaux mots de passe ne correspondent pas.")
+                    else:
+                        ok, message = changer_mot_de_passe(utilisateur["id"], mdp_actuel, mdp_nouveau)
+                        if ok:
+                            st.success(f"✅ {message}")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {message}")
+
+                st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+                c1, c2 = st.columns(2)
+                if c1.button("🚪 Se déconnecter", use_container_width=True):
+                    deconnexion_effective(cookie_manager)
+                    st.rerun()
+                if c2.button("Fermer", use_container_width=True):
+                    st.rerun()
+
+            if st.button("👤 Profil", use_container_width=True):
+                _dialog_profil()
         else:
             if st.button("🔑 Connexion", use_container_width=True, help="Se connecter ou créer un compte pour sauvegarder vos conversations"):
                 st.session_state["auth_afficher_connexion"] = True
