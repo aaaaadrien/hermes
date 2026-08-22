@@ -510,6 +510,7 @@ def outil_transcrire_video_url(url: str, conf: configparser.ConfigParser,
             resultat = subprocess.run(
                 [
                     "yt-dlp",
+                    "-f", "bestaudio/best",
                     "-o", motif_sortie,
                     url,
                 ],
