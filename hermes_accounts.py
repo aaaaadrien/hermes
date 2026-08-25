@@ -91,6 +91,37 @@ def get_connection() -> sqlite3.Connection:
     except sqlite3.OperationalError:
         pass
 
+    # Migration : colonne is_admin (préparation d'une future gestion des droits/utilisateurs).
+    # ALTER TABLE échoue silencieusement si la colonne existe déjà (bases créées avant cet ajout).
+    # TODO A SUPPR DANS QUELQUES TEMPS
+    try:
+        con.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass
+
+    # Migration : colonne is_active (désactivation de compte sans suppression, gérée par un admin).
+    # ALTER TABLE échoue silencieusement si la colonne existe déjà (bases créées avant cet ajout).
+    # TODO A SUPPR DANS QUELQUES TEMPS
+    try:
+        con.execute("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass
+
+    # Premier lancement : si le compte id=1 n'existe pas encore, crée un compte admin par défaut
+    # (identifiant "admin" / mot de passe "admin"), marqué is_admin=1. À changer immédiatement
+    # via le formulaire de changement de mot de passe une fois connecté.
+    existe_id_1 = con.execute("SELECT 1 FROM users WHERE id = 1").fetchone()
+    if not existe_id_1:
+        h, sel = _hash_mdp("admin")
+        con.execute(
+            "INSERT INTO users (id, username, password_hash, salt, created_at, is_admin) "
+            "VALUES (1, 'admin', ?, ?, ?, 1)",
+            (h, sel, int(time.time())),
+        )
+        con.commit()
+
     return con
 
 
@@ -164,17 +195,128 @@ def changer_mot_de_passe(user_id: int, mdp_actuel: str, nouveau_mdp: str) -> tup
         con.close()
 
 
+# fonction (admin) réinitialiser le mot de passe d'un utilisateur SANS connaître l'ancien
+def reinitialiser_mot_de_passe(user_id: int, nouveau_mdp: str) -> tuple[bool, str]:
+    """
+    Change le mot de passe d'un compte sans vérifier l'ancien (usage réservé à un admin,
+    contrairement à changer_mot_de_passe qui exige le mot de passe actuel).
+    Retourne (succès, message).
+    """
+    if len(nouveau_mdp) < 6:
+        return False, "Le nouveau mot de passe doit faire au moins 6 caractères."
+
+    con = get_connection()
+    try:
+        existe = con.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not existe:
+            return False, "Compte introuvable."
+
+        h_nouveau, sel_nouveau = _hash_mdp(nouveau_mdp)
+        con.execute(
+            "UPDATE users SET password_hash = ?, salt = ? WHERE id = ?",
+            (h_nouveau, sel_nouveau, user_id),
+        )
+        con.commit()
+        return True, "Mot de passe réinitialisé avec succès."
+    finally:
+        con.close()
+
+
+# fonction (admin) lister tous les comptes
+def lister_utilisateurs() -> list[dict]:
+    """Liste tous les comptes utilisateurs, triés par nom. Retourne id/username/is_admin/is_active/created_at."""
+    con = get_connection()
+    try:
+        lignes = con.execute(
+            "SELECT id, username, is_admin, is_active, created_at FROM users ORDER BY username ASC"
+        ).fetchall()
+        return [
+            {
+                "id": l["id"], "username": l["username"],
+                "is_admin": bool(l["is_admin"]), "is_active": bool(l["is_active"]),
+                "created_at": l["created_at"],
+            }
+            for l in lignes
+        ]
+    finally:
+        con.close()
+
+
+# fonction (admin) définir/retirer le statut administrateur d'un compte
+def definir_admin(user_id: int, is_admin: bool) -> tuple[bool, str]:
+    """
+    Définit (ou retire) le statut administrateur d'un compte.
+    Retourne (succès, message).
+    """
+    con = get_connection()
+    try:
+        existe = con.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not existe:
+            return False, "Compte introuvable."
+        con.execute("UPDATE users SET is_admin = ? WHERE id = ?", (1 if is_admin else 0, user_id))
+        con.commit()
+        return True, "Statut administrateur mis à jour."
+    finally:
+        con.close()
+
+
+# fonction (admin) activer/désactiver un compte (sans le supprimer)
+def definir_actif(user_id: int, is_active: bool, acteur_id: Optional[int] = None) -> tuple[bool, str]:
+    """
+    Active ou désactive un compte. Un compte désactivé ne peut plus se connecter
+    (identifiants refusés, sessions existantes révoquées immédiatement) mais ses
+    données (conversations, amphores perso...) sont conservées.
+
+    acteur_id : id de l'admin qui effectue l'action (pour empêcher l'auto-désactivation).
+
+    Règles de désactivation :
+      - Un admin ne peut pas désactiver son propre compte (acteur_id == user_id).
+      - Un compte administrateur (y compris id=1) ne peut être désactivé que s'il reste
+        au moins un autre compte administrateur actif après coup.
+
+    Retourne (succès, message).
+    """
+    con = get_connection()
+    try:
+        cible = con.execute("SELECT id, is_admin FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not cible:
+            return False, "Compte introuvable."
+
+        if not is_active:
+            if acteur_id is not None and acteur_id == user_id:
+                return False, "Vous ne pouvez pas désactiver votre propre compte."
+            if cible["is_admin"]:
+                autre_admin_actif = con.execute(
+                    "SELECT 1 FROM users WHERE is_admin = 1 AND is_active = 1 AND id != ? LIMIT 1",
+                    (user_id,),
+                ).fetchone()
+                if not autre_admin_actif:
+                    return False, (
+                        "Impossible de désactiver ce compte : il doit rester au moins "
+                        "un administrateur actif."
+                    )
+
+        con.execute("UPDATE users SET is_active = ? WHERE id = ?", (1 if is_active else 0, user_id))
+        if not is_active:
+            # Révoque immédiatement toutes les sessions en cours pour ce compte
+            con.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        con.commit()
+        return True, "Compte activé." if is_active else "Compte désactivé."
+    finally:
+        con.close()
+
+
 # fonction vérif un compte
 def verifier_identifiants(username: str, mdp: str) -> Optional[dict]:
     """
-    Vérifie le couple identifiant/mot de passe.
-    Retourne {'id', 'username'} ou None.
+    Vérifie le couple identifiant/mot de passe. Refuse la connexion si le compte est désactivé.
+    Retourne {'id', 'username', 'is_admin'} ou None.
     """
     username = username.strip()
     con = get_connection()
     try:
         ligne = con.execute(
-            "SELECT id, username, password_hash, salt FROM users WHERE username = ?",
+            "SELECT id, username, password_hash, salt, is_admin, is_active FROM users WHERE username = ?",
             (username,),
         ).fetchone()
         if not ligne:
@@ -182,7 +324,9 @@ def verifier_identifiants(username: str, mdp: str) -> Optional[dict]:
         h, _ = _hash_mdp(mdp, ligne["salt"])
         if h != ligne["password_hash"]:
             return None
-        return {"id": ligne["id"], "username": ligne["username"]}
+        if not ligne["is_active"]:
+            return None
+        return {"id": ligne["id"], "username": ligne["username"], "is_admin": bool(ligne["is_admin"])}
     finally:
         con.close()
 
@@ -205,21 +349,21 @@ def creer_session(user_id: int, duree_jours: int = DUREE_SESSION_JOURS) -> str:
 
 
 def verifier_session(token: str) -> Optional[dict]:
-    """Vérifie un jeton de session. Retourne {'id', 'username'} ou None si absent/expiré."""
+    """Vérifie un jeton de session. Retourne {'id', 'username', 'is_admin'} ou None si absent/expiré/désactivé."""
     con = get_connection()
     try:
         ligne = con.execute(
-            "SELECT s.user_id AS id, u.username, s.expire_at FROM sessions s "
+            "SELECT s.user_id AS id, u.username, u.is_admin, u.is_active, s.expire_at FROM sessions s "
             "JOIN users u ON u.id = s.user_id WHERE s.token = ?",
             (token,),
         ).fetchone()
         if not ligne:
             return None
-        if ligne["expire_at"] < int(time.time()):
+        if ligne["expire_at"] < int(time.time()) or not ligne["is_active"]:
             con.execute("DELETE FROM sessions WHERE token = ?", (token,))
             con.commit()
             return None
-        return {"id": ligne["id"], "username": ligne["username"]}
+        return {"id": ligne["id"], "username": ligne["username"], "is_admin": bool(ligne["is_admin"])}
     finally:
         con.close()
 

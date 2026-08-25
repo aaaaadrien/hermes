@@ -274,7 +274,10 @@ st.set_page_config(page_title=page_title, page_icon=page_icon, layout="wide")
 
 # Import des modules comptes et conversations (uniquement si authentification différent de none)
 if authentification == "userpass":
-    from hermes_accounts import ecran_connexion, obtenir_cookie_manager, changer_mot_de_passe, deconnexion_effective
+    from hermes_accounts import (
+        ecran_connexion, obtenir_cookie_manager, changer_mot_de_passe, deconnexion_effective,
+        creer_compte, lister_utilisateurs, definir_admin, reinitialiser_mot_de_passe, definir_actif,
+    )
     from hermes_conversations import ajouter_message, creer_conversation, vider_conversation, widget_conversations
     cookie_manager = obtenir_cookie_manager()  # une seule instance par run, réutilisée pour connexion/déconnexion
     utilisateur = ecran_connexion(cookie_manager, register)   # affiche l'écran de connexion, ou None si mode anonyme
@@ -628,8 +631,83 @@ with st.sidebar:
                 if c2.button("Fermer", use_container_width=True):
                     st.rerun()
 
-            if st.button("👤 Profil", use_container_width=True):
+            @st.dialog("🛠️ Administration")
+            def _dialog_admin():
+                utilisateurs = lister_utilisateurs()
+
+                st.markdown("**👥 Utilisateurs**")
+                for u in utilisateurs:
+                    badge = " · 🛠️ admin" if u["is_admin"] else ""
+                    if not u["is_active"]:
+                        badge += " · 🚫 désactivé"
+                    st.markdown(f"- `{u['username']}`{badge}")
+
+                st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+                st.markdown("**➕ Créer un utilisateur**")
+                nouv_user = st.text_input("Nom d'utilisateur", key="admin_nouv_user")
+                nouv_pass = st.text_input("Mot de passe", type="password", key="admin_nouv_pass")
+                nouv_admin = st.checkbox("Administrateur", key="admin_nouv_is_admin")
+                if st.button("💾 Créer", use_container_width=True, key="admin_btn_creer"):
+                    ok, message = creer_compte(nouv_user, nouv_pass)
+                    if ok and nouv_admin:
+                        cree = next((u for u in lister_utilisateurs() if u["username"] == nouv_user.strip()), None)
+                        if cree:
+                            definir_admin(cree["id"], True)
+                    if ok:
+                        st.success(f"✅ {message}")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {message}")
+
+                st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+                st.markdown("**⚙️ Gérer un compte existant**")
+                options_users = {u["id"]: u["username"] for u in utilisateurs}
+                cible_id = st.selectbox(
+                    "Compte", options=list(options_users.keys()),
+                    format_func=lambda i: options_users[i], key="admin_sel_user",
+                )
+                cible = next((u for u in utilisateurs if u["id"] == cible_id), None)
+
+                if cible:
+                    est_soi_meme = cible["id"] == utilisateur["id"]
+                    nouveau_statut = st.checkbox("Administrateur", value=cible["is_admin"], key="admin_chk_statut")
+                    nouvel_actif = st.checkbox(
+                        "Compte actif", value=cible["is_active"], key="admin_chk_actif",
+                        disabled=est_soi_meme,
+                        help="Un compte désactivé ne peut plus se connecter (données conservées)." + (
+                            " Vous ne pouvez pas désactiver votre propre compte." if est_soi_meme else ""
+                        ),
+                    )
+                    if st.button("💾 Mettre à jour le statut", use_container_width=True, key="admin_btn_statut"):
+                        ok1, message1 = definir_admin(cible["id"], nouveau_statut)
+                        ok2, message2 = (True, None)
+                        if nouvel_actif != cible["is_active"]:
+                            ok2, message2 = definir_actif(cible["id"], nouvel_actif, acteur_id=utilisateur["id"])
+                        if ok1 and ok2:
+                            st.success("✅ Statut mis à jour.")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {message1 if not ok1 else message2}")
+
+                    st.markdown("**🔑 Réinitialiser le mot de passe**")
+                    reset_pass = st.text_input("Nouveau mot de passe", type="password", key="admin_reset_pass")
+                    if st.button("💾 Réinitialiser", use_container_width=True, key="admin_btn_reset"):
+                        ok, message = reinitialiser_mot_de_passe(cible["id"], reset_pass)
+                        if ok:
+                            st.success(f"✅ {message}")
+                            st.rerun()
+                        else:
+                            st.error(f"❌ {message}")
+
+                st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+                if st.button("Fermer", use_container_width=True, key="admin_btn_fermer"):
+                    st.rerun()
+
+            col_profil, col_admin = st.columns(2) if utilisateur.get("is_admin") else (st.columns(1)[0], None)
+            if col_profil.button("👤 Profil", use_container_width=True):
                 _dialog_profil()
+            if col_admin is not None and col_admin.button("🛠️ Admin", use_container_width=True):
+                _dialog_admin()
         else:
             if st.button("🔑 Connexion", use_container_width=True, help="Se connecter ou créer un compte pour sauvegarder vos conversations"):
                 st.session_state["auth_afficher_connexion"] = True
