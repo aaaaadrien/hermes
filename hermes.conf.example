@@ -45,6 +45,25 @@ size = 512x512
 # Nombre d'étapes de diffusion (laisser vide pour utiliser la valeur par défaut du serveur)
 steps =
 
+[audio]
+# URL de base du serveur audio.cpp (API compatible OpenAI /v1/audio/speech)
+base_url = http://localhost:8083
+
+# Route de synthèse vocale (TTS)
+endpoint = /v1/audio/speech
+
+# Id du modèle TTS tel que configuré côté serveur audio.cpp (id)
+model = qwen3-tts
+
+# Voix à utiliser (dépend des voix disponibles sur le serveur audio.cpp, laisser vide pour la voix par défaut)
+voice = Sohee
+
+# Définit la langue en la forçant au modèle
+language = fr
+
+# Active/désactive le bouton "Écouter" dans l'interface web
+tts = true
+
 [agent]
 # Prompt système 
 system_prompt = Répond en français sauf avis contraire

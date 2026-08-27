@@ -623,6 +623,43 @@ def outil_generation_image(prompt: str, conf: configparser.ConfigParser,
     except Exception as e:
         return f"⚠️ Erreur lors de la génération d'image : {e}"
 
+# Synthèse vocale (TTS) d'un texte via un serveur audio.cpp local (API compatible OpenAI
+# /v1/audio/speech). Pas un outil appelable par le LLM : déclenché directement depuis
+# l'interface web via un bouton Écouter sur les réponses de l'assistant.
+def generer_tts(texte: str, conf: configparser.ConfigParser) -> tuple:
+    """
+    Envoie du texte à un serveur audio.cpp pour synthèse vocale.
+
+    Configuration attendue dans hermes.conf :
+        [audio]
+        base_url = http://localhost:8083   # racine du serveur audio.cpp
+        endpoint = /v1/audio/speech        # route compatible OpenAI
+        model    = qwen3-tts               # id EXACT du modèle TTS configuré côté serveur
+        voice    = Sohee                   # voix à utiliser (vide = défaut serveur)
+        language = fr                      # langue forcée (ex : fr). Vide = auto/défaut du modèle.
+        tts      = true                    # active/désactive le bouton côté interface web
+
+    Retourne (donnees_audio: bytes, mime: str).
+    """
+    base_url = conf.get("audio", "base_url", fallback="http://localhost:8083").rstrip("/")
+    endpoint = conf.get("audio", "endpoint", fallback="/v1/audio/speech")
+    model    = conf.get("audio", "model", fallback="").strip()
+    voice    = conf.get("audio", "voice", fallback="").strip()
+    language = conf.get("audio", "language", fallback="").strip()
+    
+    url     = f"{base_url}{endpoint}"
+    payload = {"input": texte}
+    if model:
+        payload["model"] = model
+    if voice:
+        payload["voice"] = voice
+    if language:
+        payload["language"] = language
+
+    reponse = requests.post(url, json=payload, timeout=200)
+    reponse.raise_for_status()
+    mime = reponse.headers.get("Content-Type", "audio/mpeg").split(";")[0].strip()
+    return reponse.content, mime
 
 # Retourne la date et l'heure actuelles.
 def outil_datetime() -> str:

@@ -121,6 +121,25 @@ L'image générée s'affiche directement dans la conversation (interface web), a
 
 _Note :_ La taille de l'image peut être demandée explicitement, mais attention, plus la résolution demandée est grande, plus la génération sera longue (et le serveur Stable Diffusion s'il est autohébergé, devra avoir assez de ressources)
 
+## Synthèse vocale des réponses (TTS via audio.cpp, interface web)
+
+Chaque réponse de l'assistant peut être écoutée via un bouton **"🔊 Écouter"**, qui envoie le texte à un serveur **audio.cpp** local (API compatible OpenAI `/v1/audio/speech`) et joue l'audio généré directement dans le navigateur.
+
+Activable/désactivable dans `hermes.conf` :
+```ini
+[audio]
+base_url = http://localhost:8083
+endpoint = /v1/audio/speech
+model = qwen3-tts
+voice = Sohee
+language = fr
+tts = true
+```
+
+- **`model`** doit correspondre **exactement** à l'`id` du modèle TTS configuré côté serveur audio.cpp (champ `id` de la section `models` de son `server.json`).
+- **`voice`** permet pour les modèles proposant plusieurs voix de sélectionner celle souhaitée.
+- **`tts = false`** masque simplement le bouton "🔊 Écouter" partout dans l'interface, sans appel réseau.
+
 
 ## Amphores : contextes système personnalisés (interface web)
 

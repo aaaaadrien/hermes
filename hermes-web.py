@@ -30,6 +30,7 @@ from hermes_tools import outils_actifs, executer_outil, ICONES_OUTILS
 # il a besoin des bytes bruts du fichier joint sinon ça marche pas (a améilorer plus tard)
 from hermes_tools import outil_transcrire_audio
 from hermes_tools import _url_video_autorisee
+from hermes_tools import generer_tts
 
 # Module de gestion des contextes système (Amphores)
 from hermes_amphores import (
@@ -762,6 +763,23 @@ def _afficher_pieces_jointes(pieces: list, prefixe_key: str) -> None:
         )
 
 
+def _bouton_tts(texte: str, cle: str) -> None:
+    """
+    Affiche un bouton "🔊 Écouter" qui synthétise le texte via audio.cpp au clic
+    et joue le résultat (st.audio). N'affiche rien si [audio] tts n'est pas activé
+    dans hermes.conf.
+    """
+    if not conf.getboolean("audio", "tts", fallback=False):
+        return
+    if st.button("🔊 Écouter", key=cle):
+        with st.spinner("Synthèse vocale en cours..."):
+            try:
+                donnees_audio, mime = generer_tts(texte, conf)
+                st.audio(donnees_audio, format=mime)
+            except Exception as e:
+                st.error(f"⚠️ Erreur lors de la synthèse vocale : {e}")
+
+
 st.title(header)
 
 # Initialisation de l'historique
@@ -790,6 +808,8 @@ for i, message in enumerate(st.session_state.messages):
         pieces = message.get("pieces_jointes") if isinstance(message, dict) else None
         if pieces:
             _afficher_pieces_jointes(pieces, prefixe_key=f"dl_hist_{i}")
+        if role == "assistant" and isinstance(content, str) and content.strip():
+            _bouton_tts(content, cle=f"tts_hist_{i}")
 
 _REGEX_URL = re.compile(r'https?://[^\s<>"\']+')
 
@@ -1044,6 +1064,7 @@ if prompt := st.chat_input("Posez votre question..."):
             if pieces_jointes_reponse:
                 nouveau_message["pieces_jointes"] = pieces_jointes_reponse
                 _afficher_pieces_jointes(pieces_jointes_reponse, prefixe_key="dl_chat")
+            _bouton_tts(txt_final, cle="tts_chat")
             st.session_state.messages.append(nouveau_message)
             st.session_state["derniere_reponse"] = txt_final
             if mode_persistant:
@@ -1070,6 +1091,8 @@ if prompt := st.chat_input("Posez votre question..."):
             except Exception as e:
                 st.error(f"Erreur pendant le streaming : {e}")
                 texte = "*(erreur de génération)*"
+
+            _bouton_tts(texte, cle="tts_stream")
 
             st.session_state.messages.append({"role": "assistant", "content": texte})
             st.session_state["derniere_reponse"] = texte
