@@ -33,7 +33,7 @@ class C:
 
 
 # Chargemen config
-def charger_config(chemin: str = "hermes.conf") -> configparser.ConfigParser:
+def charger_config(chemin: str = "data/hermes.conf") -> configparser.ConfigParser:
     conf = configparser.ConfigParser()
     path = Path(chemin)
     if not path.exists():
