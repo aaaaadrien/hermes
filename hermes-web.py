@@ -227,7 +227,7 @@ def construire_message_avec_fichier(info: dict, prompt: str) -> dict:
 
 # Chargement config
 @st.cache_resource
-def charger_config(chemin: str = "hermes.conf") -> configparser.ConfigParser:
+def charger_config(chemin: str = "data/hermes.conf") -> configparser.ConfigParser:
     """
     Lit le fichier hermes.conf une seule fois (mis en cache par Streamlit).
     Affiche une erreur fatale si le fichier est introuvable.

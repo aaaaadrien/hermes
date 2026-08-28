@@ -30,7 +30,7 @@ from typing import Optional
 import extra_streamlit_components as stx
 import streamlit as st
 
-FICHIER_DB = Path("hermes.db")
+FICHIER_DB = Path("data/hermes.db")
 ITERATIONS_PBKDF2 = 200_000
 NOM_COOKIE = "hermes_session"
 DUREE_SESSION_JOURS = 30
