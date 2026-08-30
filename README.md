@@ -80,7 +80,7 @@ Pour chacun, une vidéo d'installation et une fiche écrite (Linuxtricks) sont d
   - 🎥 Vidéo : https://www.youtube.com/watch?v=5vle0ONwmvs
   - 📄 Fiche : https://www.linuxtricks.fr/wiki/ia-installer-audio-cpp-pour-la-synthese-vocale-nvidia-amd-cpu
 
-_Note :_ ces serveurs peuvent tourner sur la même machine qu'Hermes ou sur des machines distinctes (y compris différentes les unes des autres) — seule l'URL configurée dans `hermes.conf` (`base_url` de chaque section) compte.
+_Note :_ ces serveurs peuvent tourner sur la même machine qu'Hermes ou sur des machines distinctes (y compris différentes les unes des autres). Seule l'URL configurée dans `hermes.conf` (`base_url` de chaque section) compte.
 
 
 ## Upload de fichier audio / vidéo (transcription à la demande)
@@ -238,7 +238,7 @@ Si on veut autoriser la création de compte (juste username + pass, pas de mail)
 
 Avant toute chose, créez le fichier de config à partir de l'exemple donné : 
 ```bash
-cp hermes.conf.example hermes.conf
+cp ressources/hermes.conf.example data/hermes.conf
 ```
 
 Personnalisez éventuellement ce fichier selon ce que vous souhaitez !
@@ -285,3 +285,19 @@ Dans la section **server** :
 - **address** permet d'écouter sur toutes les interfaces (ou l'interface donnée). Par défaut 0.0.0.0
 - **port** permet de changer le port d'écoute, 8501 par défaut
 - **maxUploadSize** permet de changer la taille max des fichiers uploadés en MB, par défaut 200
+
+### Lancement en service systemd (optionnel)
+
+Un exemple de fichier de service systemd est fourni dans `ressources/hermes.service`, pour lancer l'interface web automatiquement au démarrage (et la relancer en cas de plantage).
+
+Adaptez-le à votre installation (utilisateur, chemin du projet, chemin du venv) puis installez-le :
+```bash
+sudo cp ressources/hermes.service /etc/systemd/system/hermes.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now hermes.service
+```
+
+Pour suivre les logs :
+```bash
+sudo journalctl -u hermes.service -f
+```
