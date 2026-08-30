@@ -15,13 +15,15 @@ Dans la religion grecque antique, Hermès est le messager des dieux. Quoi de mie
 - hermes-web.py : Interface web Streamlit
 
 
-## Prérequis
+## Prérequis pour Hermes
+
+### Sur le système 
 
 - Python **3.9+**
-- Un serveur d'inférence (exemple llama.cpp) mais pas forcément sur la même machine
-- Un serveur whisper.cpp (optionnel) pour retranscrire de l'audio ou une vidéo pour analyse mais pas forcément sur la même machine
+- python-pip (Fedora/RHEL/Debian/Ubuntu : **python3-pip**)
+- Python venv (Inclus dans Python sur Fedora/RHEl. Pour Debian/Ubuntu : **python3-venv**)
 
-## Création d'un venv Python 
+### Création d'un venv Python 
 
 Pour isoler les dépendances python, créer un virtual env :
 ```bash
@@ -29,7 +31,7 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-## Installation des dépendances
+### Installation des dépendances
 
 Via pip (universel)
 ```bash
@@ -48,6 +50,38 @@ pip install -r requirements.txt
 - Gestion DOCX : python-docx
 - Téléchargement en ligne de vidéos : yt-dlp
 - Divers : cachetools
+
+
+## Serveurs `.cpp` (backends d'inférence)
+
+Hermes ne fait qu'orchestrer des appels vers des serveurs d'inférence autohébergés, tous de la famille `.cpp` (llama.cpp et ses dérivés), chacun exposant une API compatible OpenAI.
+
+Aucun n'est obligatoire à part llama.cpp. Les autres n'activent que des fonctionnalités optionnelles (transcription, génération d'image, synthèse vocale).
+
+| Serveur | Fonctionnalité dans Hermes | Obligatoire |
+|---|---|---|
+| **llama.cpp** | Inférence LLM (conversation, appel d'outils) | Oui |
+| **whisper.cpp** | Transcription audio/vidéo (upload + URL) | Non |
+| **stablediffusion.cpp** | Génération d'image | Non |
+| **audio.cpp** | Synthèse vocale (TTS) des réponses | Non |
+
+Pour chacun, une vidéo d'installation et une fiche écrite (Linuxtricks) sont disponibles :
+
+- **llama.cpp**
+  - 🎥 Vidéo : https://www.youtube.com/watch?v=NFB-c7CoGm4
+  - 📄 Fiche : https://www.linuxtricks.fr/wiki/ia-installer-llama-cpp-pour-servir-des-llm-nvidia-amd-cpu
+- **whisper.cpp**
+  - 🎥 Vidéo : https://www.youtube.com/watch?v=4y5wyLK8xjI
+  - 📄 Fiche : https://www.linuxtricks.fr/wiki/ia-installer-whisper-cpp-pour-la-reconnaissance-vocale-nvidia-amd-cpu
+- **stablediffusion.cpp**
+  - 🎥 Vidéo : https://www.youtube.com/watch?v=GeIegX8gdR4
+  - 📄 Fiche : https://www.linuxtricks.fr/wiki/ia-installer-stablediffusion-cpp-pour-la-generation-d-image-nvidia-amd-cpu
+- **audio.cpp**
+  - 🎥 Vidéo : https://www.youtube.com/watch?v=5vle0ONwmvs
+  - 📄 Fiche : https://www.linuxtricks.fr/wiki/ia-installer-audio-cpp-pour-la-synthese-vocale-nvidia-amd-cpu
+
+_Note :_ ces serveurs peuvent tourner sur la même machine qu'Hermes ou sur des machines distinctes (y compris différentes les unes des autres) — seule l'URL configurée dans `hermes.conf` (`base_url` de chaque section) compte.
+
 
 ## Upload de fichier audio / vidéo (transcription à la demande)
 
