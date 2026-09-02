@@ -23,6 +23,10 @@ from openai import OpenAI
 
 import base64
 
+import subprocess
+import sys
+import os
+
 # Module partagé contenant outils + catalogue + dispatcher
 from hermes_tools import outils_actifs, executer_outil, ICONES_OUTILS
 
@@ -701,6 +705,24 @@ with st.sidebar:
                             st.error(f"❌ {message}")
 
                 st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+                st.markdown("**📦 Modules Python & serveur**")
+                st.caption("Relance `pip install -r requirements.txt --upgrade` avec le pip du venv actif.")
+                col_pip, col_restart = st.columns(2)
+                if col_pip.button("⬆️ Mettre à jour les modules", use_container_width=True, key="admin_btn_pip_update"):
+                    with st.spinner("Mise à jour des modules en cours..."):
+                        ok, sortie = _mettre_a_jour_modules_python()
+                    if ok:
+                        st.success("✅ Modules mis à jour avec succès.")
+                    else:
+                        st.error("❌ Échec de la mise à jour des modules.")
+                    if sortie:
+                        st.code(sortie, language="text")
+                    st.warning("⚠️ Un redémarrage du serveur (Streamlit/service) peut être nécessaire pour que les nouvelles versions soient prises en compte.")
+                if col_restart.button("🔄 Redémarrer le serveur", use_container_width=True, key="admin_btn_restart"):
+                    st.info("Redémarrage en cours... la page va se déconnecter quelques secondes.")
+                    _redemarrer_serveur()
+
+                st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
                 if st.button("Fermer", use_container_width=True, key="admin_btn_fermer"):
                     st.rerun()
 
@@ -737,6 +759,47 @@ with st.sidebar:
             icone = ICONES_OUTILS.get(nom, "⚙️")
             st.markdown(f"{icone} `{nom}`")
 
+# TODO (voir pour mieux définir les fonctions)
+def _mettre_a_jour_modules_python() -> tuple[bool, str]:
+    """
+    Lance `pip install -r requirements.txt --upgrade` avec le pip du venv actif
+    Retourne (succès, sortie combinée stdout+stderr).
+    """
+    chemin_requirements = Path(__file__).parent / "requirements.txt"
+    if not chemin_requirements.exists():
+        return False, f"requirements.txt introuvable : {chemin_requirements}"
+
+    try:
+        resultat = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-r", str(chemin_requirements), "--upgrade"],
+            capture_output=True, text=True, timeout=600,
+        )
+        sortie = (resultat.stdout or "") + (resultat.stderr or "")
+        return resultat.returncode == 0, sortie.strip()
+    except subprocess.TimeoutExpired:
+        return False, "Délai d'attente dépassé lors de la mise à jour des modules."
+    except Exception as e:
+        return False, f"Erreur lors du lancement de pip : {e}"
+
+
+def _redemarrer_serveur() -> None:
+    """
+    Redémarre le serveur Streamlit en place, en remplaçant le process actuel.
+    Ferme d'abord tous les descripteurs de fichiers ouverts (sauf stdin/stdout/stderr)
+    Coupe immédiatement toutes les sessions connectées (reboot oblige),
+    y compris celle qui a cliqué le bouton (page freeze quelques secondes avant de revenir/
+    """
+    script = str(Path(__file__).resolve())
+
+    # Ferme tous les FDs ouverts au-delà de stdin/stdout/stderr (dont le socket
+    # d'écoute du serveur actuel) pour que le nouveau process reparte propre.
+    try:
+        fd_max = os.sysconf("SC_OPEN_MAX")
+    except (ValueError, OSError, AttributeError):
+        fd_max = 4096
+    os.closerange(3, fd_max)
+
+    os.execv(sys.executable, [sys.executable, "-m", "streamlit", "run", script])
 
 # Interface Streamlit Entete
 def _afficher_pieces_jointes(pieces: list, prefixe_key: str) -> None:
