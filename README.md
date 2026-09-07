@@ -31,6 +31,11 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
+Mettre à jour pip :
+```bash
+pip install --upgrade pip
+```
+
 ### Installation des dépendances
 
 Via pip (universel)
