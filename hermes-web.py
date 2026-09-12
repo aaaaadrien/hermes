@@ -285,7 +285,7 @@ if authentification == "userpass":
     )
     from hermes_conversations import ajouter_message, creer_conversation, vider_conversation, widget_conversations
     cookie_manager = obtenir_cookie_manager()  # une seule instance par run, réutilisée pour connexion/déconnexion
-    utilisateur = ecran_connexion(cookie_manager, register)   # affiche l'écran de connexion, ou None si mode anonyme
+    utilisateur = ecran_connexion(cookie_manager, conf, register)   # affiche l'écran de connexion, ou None si mode anonyme
 else:
     utilisateur = None
 
@@ -613,20 +613,23 @@ with st.sidebar:
             def _dialog_profil():
                 st.caption(f"Connecté en tant que **{utilisateur['username']}**")
 
-                st.markdown("**🔑 Changer mon mot de passe**")
-                mdp_actuel = st.text_input("Mot de passe actuel", type="password", key="cmdp_actuel")
-                mdp_nouveau = st.text_input("Nouveau mot de passe", type="password", key="cmdp_nouveau")
-                mdp_confirme = st.text_input("Confirmer le nouveau mot de passe", type="password", key="cmdp_confirme")
-                if st.button("💾 Valider", use_container_width=True):
-                    if mdp_nouveau != mdp_confirme:
-                        st.error("❌ Les nouveaux mots de passe ne correspondent pas.")
-                    else:
-                        ok, message = changer_mot_de_passe(utilisateur["id"], mdp_actuel, mdp_nouveau)
-                        if ok:
-                            st.success(f"✅ {message}")
-                            st.rerun()
+                if utilisateur.get("auth_provider") == "oidc":
+                    st.info("🔐 Compte connecté via SSO ! Le mot de passe est géré par le fournisseur d'identité, pas par Hermes.")
+                else:
+                    st.markdown("**🔑 Changer mon mot de passe**")
+                    mdp_actuel = st.text_input("Mot de passe actuel", type="password", key="cmdp_actuel")
+                    mdp_nouveau = st.text_input("Nouveau mot de passe", type="password", key="cmdp_nouveau")
+                    mdp_confirme = st.text_input("Confirmer le nouveau mot de passe", type="password", key="cmdp_confirme")
+                    if st.button("💾 Valider", use_container_width=True):
+                        if mdp_nouveau != mdp_confirme:
+                            st.error("❌ Les nouveaux mots de passe ne correspondent pas.")
                         else:
-                            st.error(f"❌ {message}")
+                            ok, message = changer_mot_de_passe(utilisateur["id"], mdp_actuel, mdp_nouveau)
+                            if ok:
+                                st.success(f"✅ {message}")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {message}")
 
                 st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
                 c1, c2 = st.columns(2)
@@ -643,6 +646,8 @@ with st.sidebar:
                 st.markdown("**👥 Utilisateurs**")
                 for u in utilisateurs:
                     badge = " · 🛠️ admin" if u["is_admin"] else ""
+                    if u.get("auth_provider") == "oidc":
+                        badge += " · 🔐 SSO"
                     if not u["is_active"]:
                         badge += " · 🚫 désactivé"
                     st.markdown(f"- `{u['username']}`{badge}")
@@ -694,15 +699,18 @@ with st.sidebar:
                         else:
                             st.error(f"❌ {message1 if not ok1 else message2}")
 
-                    st.markdown("**🔑 Réinitialiser le mot de passe**")
-                    reset_pass = st.text_input("Nouveau mot de passe", type="password", key="admin_reset_pass")
-                    if st.button("💾 Réinitialiser", use_container_width=True, key="admin_btn_reset"):
-                        ok, message = reinitialiser_mot_de_passe(cible["id"], reset_pass)
-                        if ok:
-                            st.success(f"✅ {message}")
-                            st.rerun()
-                        else:
-                            st.error(f"❌ {message}")
+                    if cible.get("auth_provider") == "oidc":
+                        st.caption("🔐 Compte SSO : le mot de passe est géré par le fournisseur d'identité (non réinitialisable ici). Le statut administrateur reste modifiable ci-dessus.")
+                    else:
+                        st.markdown("**🔑 Réinitialiser le mot de passe**")
+                        reset_pass = st.text_input("Nouveau mot de passe", type="password", key="admin_reset_pass")
+                        if st.button("💾 Réinitialiser", use_container_width=True, key="admin_btn_reset"):
+                            ok, message = reinitialiser_mot_de_passe(cible["id"], reset_pass)
+                            if ok:
+                                st.success(f"✅ {message}")
+                                st.rerun()
+                            else:
+                                st.error(f"❌ {message}")
 
                 st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
                 st.markdown("**📦 Modules Python & serveur**")
@@ -800,6 +808,7 @@ def _redemarrer_serveur() -> None:
     os.closerange(3, fd_max)
 
     os.execv(sys.executable, [sys.executable, "-m", "streamlit", "run", script])
+
 
 # Interface Streamlit Entete
 def _afficher_pieces_jointes(pieces: list, prefixe_key: str) -> None:

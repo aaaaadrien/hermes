@@ -29,3 +29,6 @@ python-docx
 cachetools
 
 yt-dlp
+
+authlib
+joserfc

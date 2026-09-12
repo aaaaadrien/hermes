@@ -103,6 +103,26 @@ authentification = none
 # off : seul l'onglet « Connexion » est affiché (les comptes doivent être créés autrement)
 register = off
 
+[oidc]
+# Active/désactive le bouton "Connexion SSO" sur l'écran de connexion.
+# Nécessite [auth] authentification = userpass (l'OIDC vient en complément des comptes
+# locaux, pas en remplacement : les deux boutons de connexion coexistent).
+enabled = false
+
+# URL de l'issuer OIDC (ex : Keycloak). Le document de découverte est lu automatiquement
+# sur <issuer>/.well-known/openid-configuration.
+issuer = https://sso.example.org/realms/mon-realm
+
+client_id = hermes
+client_secret = CHANGE_MOI
+
+# URL de callback exacte, DOIT être enregistrée côté client OIDC (Keycloak, etc.)
+# et correspondre à l'URL publique d'Hermes (ex : https://hermes.example.org/).
+redirect_uri = http://localhost:8501/
+
+# Scope OIDC, standard
+scope = openid profile email
+
 [web]
 # Titre affiché dans l'onglet du navigateur
 page_title = Hermes chatbot by Linuxtricks.fr

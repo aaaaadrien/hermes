@@ -31,6 +31,7 @@ import extra_streamlit_components as stx
 import streamlit as st
 
 FICHIER_DB = Path("data/hermes.db")
+
 ITERATIONS_PBKDF2 = 200_000
 NOM_COOKIE = "hermes_session"
 DUREE_SESSION_JOURS = 30
@@ -109,6 +110,26 @@ def get_connection() -> sqlite3.Connection:
     except sqlite3.OperationalError:
         pass
 
+    # Migration : colonnes auth_provider ('local' ou 'oidc') et oidc_sub (identifiant stable
+    # côté fournisseur OIDC, claim 'sub' du id_token) pour les comptes provisionnés via SSO.
+    # ALTER TABLE échoue silencieusement si les colonnes existent déjà (bases créées avant cet ajout).
+    # TODO A SUPPR DANS QUELQUES TEMPS
+    try:
+        con.execute("ALTER TABLE users ADD COLUMN auth_provider TEXT NOT NULL DEFAULT 'local'")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        con.execute("ALTER TABLE users ADD COLUMN oidc_sub TEXT")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_sub ON users(oidc_sub) WHERE oidc_sub IS NOT NULL")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass
+
     # Premier lancement : si le compte id=1 n'existe pas encore, crée un compte admin par défaut
     # (identifiant "admin" / mot de passe "admin"), marqué is_admin=1. À changer immédiatement
     # via le formulaire de changement de mot de passe une fois connecté.
@@ -163,10 +184,59 @@ def creer_compte(username: str, mdp: str) -> tuple[bool, str]:
     finally:
         con.close()
 
+
+# fonction résoudre (ou créer au premier login) le compte local associé à un utilisateur OIDC
+def resoudre_ou_creer_utilisateur_oidc(sub: str, username_prefere: str) -> dict:
+    """
+    Retourne le compte local lié au claim 'sub' du id_token OIDC (identifiant stable
+    côté fournisseur d'identité). Le crée automatiquement à la première connexion
+    (auth_provider='oidc', mot de passe local inutilisable généré aléatoirement,
+    ces comptes ne peuvent de toute façon jamais se connecter via le formulaire mdp).
+
+    username_prefere : claim 'preferred_username' (ou équivalent) du id_token, utilisé
+    comme nom affiché. En cas de collision avec un compte local existant (username
+    différent auth_provider), un suffixe dérivé de sub est ajouté pour rester unique!
+
+    Retourne {'id', 'username', 'is_admin', 'auth_provider'}.
+    """
+    con = get_connection()
+    try:
+        ligne = con.execute(
+            "SELECT id, username, is_admin, auth_provider, is_active FROM users WHERE oidc_sub = ?",
+            (sub,),
+        ).fetchone()
+        if ligne:
+            return {
+                "id": ligne["id"], "username": ligne["username"],
+                "is_admin": bool(ligne["is_admin"]), "auth_provider": ligne["auth_provider"],
+            }
+
+        # Premier login : provisioning du compte local
+        username = (username_prefere or f"oidc_{sub[:8]}").strip()
+        collision = con.execute("SELECT 1 FROM users WHERE username = ?", (username,)).fetchone()
+        if collision:
+            username = f"{username}_{sub[:6]}"
+
+        # Mot de passe local inutilisable (aléatoire, jamais communiqué) : les comptes OIDC
+        # ne se connectent que via le bouton SSO, jamais via le formulaire mot de passe.
+        # Y a peut etre mieux mais on laisse comme ça
+        h, sel = _hash_mdp(secrets.token_urlsafe(32))
+        cur = con.execute(
+            "INSERT INTO users (username, password_hash, salt, created_at, auth_provider, oidc_sub) "
+            "VALUES (?, ?, ?, ?, 'oidc', ?)",
+            (username, h, sel, int(time.time()), sub),
+        )
+        con.commit()
+        return {"id": cur.lastrowid, "username": username, "is_admin": False, "auth_provider": "oidc"}
+    finally:
+        con.close()
+
+
 # fonction changer le mot de passe d'un compte existant
 def changer_mot_de_passe(user_id: int, mdp_actuel: str, nouveau_mdp: str) -> tuple[bool, str]:
     """
     Change le mot de passe d'un compte, après vérification du mot de passe actuel.
+    Refuse pour un compte OIDC (géré par le fournisseur d'identité, pas par Hermes).
     Retourne (succès, message).
     """
     if len(nouveau_mdp) < 6:
@@ -175,10 +245,12 @@ def changer_mot_de_passe(user_id: int, mdp_actuel: str, nouveau_mdp: str) -> tup
     con = get_connection()
     try:
         ligne = con.execute(
-            "SELECT password_hash, salt FROM users WHERE id = ?", (user_id,)
+            "SELECT password_hash, salt, auth_provider FROM users WHERE id = ?", (user_id,)
         ).fetchone()
         if not ligne:
             return False, "Compte introuvable."
+        if ligne["auth_provider"] == "oidc":
+            return False, "Ce compte est géré via SSO (OIDC) : le mot de passe ne peut pas être changé ici."
 
         h_actuel, _ = _hash_mdp(mdp_actuel, ligne["salt"])
         if h_actuel != ligne["password_hash"]:
@@ -200,6 +272,7 @@ def reinitialiser_mot_de_passe(user_id: int, nouveau_mdp: str) -> tuple[bool, st
     """
     Change le mot de passe d'un compte sans vérifier l'ancien (usage réservé à un admin,
     contrairement à changer_mot_de_passe qui exige le mot de passe actuel).
+    Refuse pour un compte OIDC (géré par le fournisseur d'identité, pas par Hermes).
     Retourne (succès, message).
     """
     if len(nouveau_mdp) < 6:
@@ -207,9 +280,11 @@ def reinitialiser_mot_de_passe(user_id: int, nouveau_mdp: str) -> tuple[bool, st
 
     con = get_connection()
     try:
-        existe = con.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone()
-        if not existe:
+        ligne = con.execute("SELECT auth_provider FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not ligne:
             return False, "Compte introuvable."
+        if ligne["auth_provider"] == "oidc":
+            return False, "Ce compte est géré via SSO (OIDC) : son mot de passe ne peut pas être réinitialisé ici."
 
         h_nouveau, sel_nouveau = _hash_mdp(nouveau_mdp)
         con.execute(
@@ -224,17 +299,17 @@ def reinitialiser_mot_de_passe(user_id: int, nouveau_mdp: str) -> tuple[bool, st
 
 # fonction (admin) lister tous les comptes
 def lister_utilisateurs() -> list[dict]:
-    """Liste tous les comptes utilisateurs, triés par nom. Retourne id/username/is_admin/is_active/created_at."""
+    """Liste tous les comptes utilisateurs, triés par nom. Retourne id/username/is_admin/is_active/auth_provider/created_at."""
     con = get_connection()
     try:
         lignes = con.execute(
-            "SELECT id, username, is_admin, is_active, created_at FROM users ORDER BY username ASC"
+            "SELECT id, username, is_admin, is_active, auth_provider, created_at FROM users ORDER BY username ASC"
         ).fetchall()
         return [
             {
                 "id": l["id"], "username": l["username"],
                 "is_admin": bool(l["is_admin"]), "is_active": bool(l["is_active"]),
-                "created_at": l["created_at"],
+                "auth_provider": l["auth_provider"], "created_at": l["created_at"],
             }
             for l in lignes
         ]
@@ -309,24 +384,30 @@ def definir_actif(user_id: int, is_active: bool, acteur_id: Optional[int] = None
 # fonction vérif un compte
 def verifier_identifiants(username: str, mdp: str) -> Optional[dict]:
     """
-    Vérifie le couple identifiant/mot de passe. Refuse la connexion si le compte est désactivé.
-    Retourne {'id', 'username', 'is_admin'} ou None.
+    Vérifie le couple identifiant/mot de passe. Refuse la connexion si le compte est désactivé
+    ou si c'est un compte OIDC (qui ne peut se connecter que via SSO).
+    Retourne {'id', 'username', 'is_admin', 'auth_provider'} ou None.
     """
     username = username.strip()
     con = get_connection()
     try:
         ligne = con.execute(
-            "SELECT id, username, password_hash, salt, is_admin, is_active FROM users WHERE username = ?",
+            "SELECT id, username, password_hash, salt, is_admin, is_active, auth_provider FROM users WHERE username = ?",
             (username,),
         ).fetchone()
         if not ligne:
+            return None
+        if ligne["auth_provider"] == "oidc":
             return None
         h, _ = _hash_mdp(mdp, ligne["salt"])
         if h != ligne["password_hash"]:
             return None
         if not ligne["is_active"]:
             return None
-        return {"id": ligne["id"], "username": ligne["username"], "is_admin": bool(ligne["is_admin"])}
+        return {
+            "id": ligne["id"], "username": ligne["username"],
+            "is_admin": bool(ligne["is_admin"]), "auth_provider": ligne["auth_provider"],
+        }
     finally:
         con.close()
 
@@ -349,11 +430,11 @@ def creer_session(user_id: int, duree_jours: int = DUREE_SESSION_JOURS) -> str:
 
 
 def verifier_session(token: str) -> Optional[dict]:
-    """Vérifie un jeton de session. Retourne {'id', 'username', 'is_admin'} ou None si absent/expiré/désactivé."""
+    """Vérifie un jeton de session. Retourne {'id', 'username', 'is_admin', 'auth_provider'} ou None si absent/expiré/désactivé."""
     con = get_connection()
     try:
         ligne = con.execute(
-            "SELECT s.user_id AS id, u.username, u.is_admin, u.is_active, s.expire_at FROM sessions s "
+            "SELECT s.user_id AS id, u.username, u.is_admin, u.is_active, u.auth_provider, s.expire_at FROM sessions s "
             "JOIN users u ON u.id = s.user_id WHERE s.token = ?",
             (token,),
         ).fetchone()
@@ -363,7 +444,10 @@ def verifier_session(token: str) -> Optional[dict]:
             con.execute("DELETE FROM sessions WHERE token = ?", (token,))
             con.commit()
             return None
-        return {"id": ligne["id"], "username": ligne["username"], "is_admin": bool(ligne["is_admin"])}
+        return {
+            "id": ligne["id"], "username": ligne["username"],
+            "is_admin": bool(ligne["is_admin"]), "auth_provider": ligne["auth_provider"],
+        }
     finally:
         con.close()
 
@@ -388,22 +472,61 @@ def obtenir_cookie_manager() -> stx.CookieManager:
     return stx.CookieManager()
 
 
-def ecran_connexion(cookie_manager: stx.CookieManager, register: bool = False) -> Optional[dict]:
+def ecran_connexion(cookie_manager: stx.CookieManager, conf, register: bool = False) -> Optional[dict]:
     """
     Point d'entrée unique appelé depuis hermes-web.py
     
     - cookie_manager : instance unique créée une fois par run via obtenir_cookie_manager()
+    - conf : configuration hermes.conf (nécessaire pour l'OIDC, section [oidc])
     - register : reflète l'option register de la section [auth] 
 
     - Si l'utilisateur est déjà connecté dans cette session (ou via le cookie) : 
-      - retourne son dict ({'id', 'username'}) continue
+      - retourne son dict ({'id', 'username', 'is_admin', 'auth_provider'}) continue
 
-    Connexion : à la connexion, un jeton est créé en base et déposé dans un cookie navigateur
-     
+    Connexion : à la connexion (locale ou OIDC), un jeton est créé en base et déposé
+    dans un cookie navigateur (un utilisateur OIDC obtient exactement la même session
+    persistante qu'un utilisateur local, donc le reste de l'application (conversations,
+    amphores perso, panneau admin...) fonctionne sans distinction de provenance.
+
     Déconnexion : le bouton déconnexion met st.session_state["auth_afficher_deconnexion"] = True
     et affiche un écran de confirmation avant d'effectuer réellement la déconnexion.
     (pas top mais plus facile que de refresh la page)
     """
+    # Retour de callback OIDC (?code=&state= dans l'URL) : traité en priorité, avant
+    # toute autre logique, indépendamment de auth_afficher_connexion (la redirection
+    # complète vers l'IdP peut faire perdre cet état côté session selon le navigateur).
+    if "auth_user" not in st.session_state and conf.getboolean("oidc", "enabled", fallback=False):
+        from hermes_oidc import traiter_callback
+        claims = traiter_callback(conf)
+        if claims is not None:
+            utilisateur = resoudre_ou_creer_utilisateur_oidc(
+                sub=claims["sub"],
+                username_prefere=claims.get("preferred_username") or claims.get("email") or "",
+            )
+            con = get_connection()
+            try:
+                actif = con.execute("SELECT is_active FROM users WHERE id = ?", (utilisateur["id"],)).fetchone()
+            finally:
+                con.close()
+            if actif and not actif["is_active"]:
+                st.error("❌ Ce compte a été désactivé.")
+                st.query_params.clear()
+                st.stop()
+
+            token = creer_session(utilisateur["id"])
+            cookie_manager.set(
+                NOM_COOKIE,
+                token,
+                expires_at=datetime.now() + timedelta(days=DUREE_SESSION_JOURS),
+                key="set_hermes_session_cookie",
+            )
+            st.session_state["auth_user"] = utilisateur
+            st.session_state["auth_token"] = token
+            st.session_state.pop("auth_afficher_connexion", None)
+            st.query_params.clear()
+            time.sleep(0.5)  # laisse le temps au composant JS d'écrire le cookie
+            st.rerun()
+
     # Reconnexion automatique via le cookie (si pas déjà authentifié dans la session)
     if "auth_user" not in st.session_state:
         token = cookie_manager.get(cookie=NOM_COOKIE)
@@ -435,6 +558,15 @@ def ecran_connexion(cookie_manager: stx.CookieManager, register: bool = False) -
         return None
 
     st.title("🔐 Connexion")
+
+    if conf.getboolean("oidc", "enabled", fallback=False):
+        from hermes_oidc import construire_url_autorisation
+        url_sso = construire_url_autorisation(conf)
+        if url_sso:
+            st.link_button("🔐 Connexion SSO", url_sso, use_container_width=True, type="primary")
+            st.divider()
+        else:
+            st.warning("⚠️ SSO indisponible (fournisseur d'identité injoignable).")
 
     if register:
         onglet_connexion, onglet_creation = st.tabs(["Connexion", "Créer un compte"])

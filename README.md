@@ -54,6 +54,7 @@ pip install -r requirements.txt
 - Gestion ODS/ODT/ODP : odfpy + tabulate
 - Gestion DOCX : python-docx
 - Téléchargement en ligne de vidéos : yt-dlp
+- Authentification OIDC (SSO) : authlib + joserfc
 - Divers : cachetools
 
 
@@ -236,6 +237,39 @@ Active la gestion de comptes (utilisateur/mot de passe) et la sauvegarde des con
 Une fois connecté, chaque échange est automatiquement enregistré. La sidebar propose de lister, reprendre, renommer et supprimer ses conversations. 
 
 Si on veut autoriser la création de compte (juste username + pass, pas de mail) mettre **`register`** à on.
+
+## Authentification OIDC / SSO (interface web)
+
+En complément des comptes locaux (username/mot de passe), Hermes peut proposer un bouton **"🔐 Connexion SSO"** s'appuyant sur un fournisseur d'identité OIDC (Keycloak, ou tout IdP standard exposant un endpoint `.well-known/openid-configuration`). Les deux modes de connexion coexistent : le bouton SSO apparaît à côté du formulaire de connexion locale.
+
+Nécessite `[auth] authentification = userpass` (l'OIDC vient en complément des comptes locaux, pas en remplacement).
+
+### Configuration (`hermes.conf`, section `[oidc]`)
+
+```ini
+[oidc]
+enabled = false
+
+# URL de l'issuer OIDC. Le document de découverte est lu automatiquement sur
+# <issuer>/.well-known/openid-configuration
+issuer = https://sso.linuxtricks.fr/realms/mon-realm
+
+client_id = hermes
+client_secret = CLIENT_SECRET_DE_L_IDP
+
+# URL de callback exacte, DOIT être enregistrée côté client OIDC (Keycloak, etc.)
+# et correspondre à l'URL publique d'Hermes.
+redirect_uri = http://localhost:8501/
+
+scope = openid profile email
+```
+
+### Fonctionnement
+
+- **Premier login SSO** : le compte local associé est créé automatiquement (identifié de façon stable par le claim `sub` du id_token, pas par le nom d'utilisateur qui peut changer côté IdP). Un mot de passe local aléatoire non utilisable est attribué.
+- **Session** : une fois authentifié, un utilisateur SSO obtient exactement la même session persistante (cookie navigateur) qu'un utilisateur local. Les conversations, amphores perso, tout fonctionne à l'identique, sans distinction.
+- **Mot de passe** : un utilisateur OIDC ne peut pas changer son mot de passe dans Hermes (section "👤 Profil"), et un administrateur ne peut pas non plus le réinitialiser depuis l'espace "🛠️ Admin". Ces comptes sont badgés `🔐 SSO` dans la liste des utilisateurs. Le statut **administrateur** reste modifiable pour un compte SSO.
+- **Déconnexion** : seule la session locale Hermes est fermée (pas de déconnexion globale côté fournisseur d'identité). Un utilisateur encore connecté côté IdP sera reconnecté silencieusement s'il re-clique sur "🔐 Connexion SSO".
 
 ##  Lancement
 
