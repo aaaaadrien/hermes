@@ -27,6 +27,12 @@ response_format = json
 # Langue forcée pour la transcription (code ISO-639-1, laisser vide pour auto-détection)
 language = fr
 
+# Format du fichier audio généré par ffmpeg avant envoi à whisper.cpp :
+# wav (par défaut) : PCM brut, volumineux (~115 Mo/heure) mais compatible sans ambiguïté.
+# ogg              : Vorbis compressé, bien plus léger (~15 Mo/heure), utile pour les longs enregistrements
+#                    Nécessite que whisper-server sache le décoder (lancé avec --convert).
+audio_format = wav
+
 [video_url]
 # Liste blanche des domaines autorisés pour outil_transcrire_video_url (yt-dlp), séparés par des virgules.
 # Mettre "all" ou "*" pour désactiver la restriction et autoriser tous les sites (déconseillé).

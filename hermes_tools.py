@@ -241,10 +241,10 @@ _EXTENSIONS_VIDEO = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
 
 def _extraire_audio_ffmpeg(donnees: bytes = None, nom_fichier: str = "audio.mp4",
                             ignorer_debut_secondes: float = 0, ignorer_fin_secondes: float = 0,
-                            chemin_in: Optional[str] = None) -> bytes:
+                            chemin_in: Optional[str] = None, format_sortie: str = "wav") -> tuple:
     """
-    Extrait la piste audio d'un fichier vidéo et la convertit en WAV mono 16 kHz
-    (format standard attendu par whisper.cpp) via ffmpeg.
+    Extrait la piste audio d'un fichier vidéo et la convertit en mono 16 kHz
+    (format attendu par whisper.cpp) via ffmpeg.
     Note : on supprime les silences et accélère un peu l'audio (plus rapide à traiter)
 
     donnees                : contenu binaire du fichier source (bytes). Ignoré si chemin_in
@@ -253,16 +253,25 @@ def _extraire_audio_ffmpeg(donnees: bytes = None, nom_fichier: str = "audio.mp4"
     ignorer_debut_secondes : si > 0, coupe ce nombre de secondes au début du fichier
                              (pour pas traiter une intro de live)
     ignorer_fin_secondes   : si > 0, coupe ce nombre de secondes à la fin du fichier
+    format_sortie          : "wav" (par défaut, PCM brut) ou "ogg" (Vorbis compressé,
+                             utile quand le WAV généré est trop volumineux : voir
+                             [whisper] audio_format dans hermes.conf)
 
     Nécessite que le binaire `ffmpeg` soit installé et accessible dans le PATH.
+
+    Retourne (donnees_audio: bytes, extension: str).
     """
+    format_sortie = (format_sortie or "wav").strip().lower()
+    if format_sortie not in ("wav", "ogg"):
+        format_sortie = "wav"
+
     fichier_in_temporaire = chemin_in is None
     if chemin_in is None:
         suffixe_in = Path(nom_fichier).suffix or ".mp4"
         with tempfile.NamedTemporaryFile(suffix=suffixe_in, delete=False) as f_in:
             f_in.write(donnees)
             chemin_in = f_in.name
-    chemin_out = chemin_in + ".wav"
+    chemin_out = chemin_in + "." + format_sortie
 
     try:
         commande = ["ffmpeg", "-y"]
@@ -278,15 +287,17 @@ def _extraire_audio_ffmpeg(donnees: bytes = None, nom_fichier: str = "audio.mp4"
             "-ac", "1",         # mono car plus leger
             "-ar", "16000",     # 16 kHz
             "-af", "silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-40dB,atempo=1.2", # Supprimer les blancs et accélérer pour avoir moins long à traiter
-            "-f", "wav",
-            chemin_out,
         ]
+        if format_sortie == "ogg":
+            commande += ["-c:a", "libvorbis", "-q:a", "4", "-f", "ogg", chemin_out]  # ~128 kbps, bien plus léger qu'un WAV
+        else:
+            commande += ["-f", "wav", chemin_out]
         resultat = subprocess.run(commande, capture_output=True, timeout=900)
         if resultat.returncode != 0:
             erreur = resultat.stderr.decode("utf-8", errors="replace")[-500:]
             raise RuntimeError(f"ffmpeg a échoué : {erreur}")
         with open(chemin_out, "rb") as f_out:
-            return f_out.read()
+            return f_out.read(), format_sortie
     finally:
         chemins_a_supprimer = [chemin_out]
         if fichier_in_temporaire:
@@ -346,12 +357,14 @@ def outil_transcrire_audio(donnees: bytes, nom_fichier: str, conf: configparser.
         if (Path(nom_fichier).suffix.lower() in _EXTENSIONS_VIDEO
                 or ignorer_debut_secondes > 0 or ignorer_fin_secondes > 0):
             try:
-                donnees = _extraire_audio_ffmpeg(
+                format_sortie = conf.get("whisper", "audio_format", fallback="wav")
+                donnees, extension = _extraire_audio_ffmpeg(
                     donnees, nom_fichier,
                     ignorer_debut_secondes=ignorer_debut_secondes,
                     ignorer_fin_secondes=ignorer_fin_secondes,
+                    format_sortie=format_sortie,
                 )
-                nom_fichier = Path(nom_fichier).stem + ".wav"
+                nom_fichier = Path(nom_fichier).stem + "." + extension
             except FileNotFoundError:
                 return (
                     "⚠️ ffmpeg n'est pas installé (ou introuvable dans le PATH). "
@@ -535,12 +548,14 @@ def outil_transcrire_video_url(url: str, conf: configparser.ConfigParser,
         # chemin_in=chemin_audio : ffmpeg lit directement le fichier déjà écrit par yt-dlp sur
         # disque, sans le recopier en mémoire ni le réécrire dans un fichier temporaire supplémentaire.
         try:
-            donnees = _extraire_audio_ffmpeg(
+            format_sortie = conf.get("whisper", "audio_format", fallback="wav")
+            donnees, extension = _extraire_audio_ffmpeg(
                 chemin_in=chemin_audio, nom_fichier=nom_fichier,
                 ignorer_debut_secondes=ignorer_debut_secondes,
                 ignorer_fin_secondes=ignorer_fin_secondes,
+                format_sortie=format_sortie,
             )
-            nom_fichier = Path(nom_fichier).stem + ".wav"
+            nom_fichier = Path(nom_fichier).stem + "." + extension
         except FileNotFoundError:
             return "⚠️ ffmpeg n'est pas installé (ou introuvable dans le PATH)."
         except Exception as e:
