@@ -96,9 +96,9 @@ def extraire_contenu_fichier(fichier, conf: configparser.ConfigParser) -> dict:
     # PDF : extraction via PyMuPDF
     if ext == ".pdf":
         try:
-            import fitz  # PyMuPDF
+            import pymupdf
             donnees = fichier.read()
-            doc     = fitz.open(stream=donnees, filetype="pdf")
+            doc     = pymupdf.open(stream=donnees, filetype="pdf")
             texte   = "\n".join(page.get_text() for page in doc)
         except ImportError:
             texte = "⚠️ PyMuPDF non installé (pip install pymupdf). Impossible d'extraire le PDF."
