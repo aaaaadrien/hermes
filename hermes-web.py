@@ -258,6 +258,7 @@ def creer_client(base_url: str, api_key: str) -> OpenAI:
 
 # Interface Streamlit HEAD
 conf = charger_config()
+LIMITE_CONTEXTE = conf.getint("web", "limite_contexte_fichier", fallback=LIMITE_CONTEXTE)
 
 page_title  = conf.get("web",   "page_title",  fallback="Hermes chatbot by Linuxtricks.fr")
 page_icon   = conf.get("web",   "page_icon",   fallback="📜")

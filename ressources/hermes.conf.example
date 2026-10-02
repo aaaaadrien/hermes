@@ -136,6 +136,10 @@ page_title = Hermes chatbot by Linuxtricks.fr
 page_icon  = 📜
 # Titre H1 de l'interface Streamlit
 header     = Hermes chatbot by Linuxtricks.fr
+# Nombre maximum de caractères extraits d'un fichier texte joint (PDF, DOCX, CSV, TXT...)
+# Au-delà, le texte est tronqué.
+# Augmenter cette valeur pour les gros documents (ex : PDF volumineux), mais conso tokens ++.
+limite_contexte_fichier = 65536
 
 [cli]
 # Bannière d'accueil au démarrage
