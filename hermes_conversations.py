@@ -197,13 +197,16 @@ def widget_conversations(user: dict, amphore_id_actif: str, sys_prompt_defaut: s
     # selectbox resynchronisé à chaque run avec conversation_id sinon ça bug
     st.session_state["sel_conversation"] = st.session_state["conversation_id"]
 
-    st.selectbox(
-        "Reprendre une conversation",
-        options=ids_options,
-        format_func=_format_conversation,
-        key="sel_conversation",
-        on_change=_changer_conversation,
-    )
+    ephemeral_mode = st.session_state.get("ephemeral_mode", False)
+
+    if not ephemeral_mode:
+        st.selectbox(
+            "Reprendre une conversation",
+            options=ids_options,
+            format_func=_format_conversation,
+            key="sel_conversation",
+            on_change=_changer_conversation,
+        )
 
     conv_id_actif = st.session_state["conversation_id"]
 
@@ -225,14 +228,33 @@ def widget_conversations(user: dict, amphore_id_actif: str, sys_prompt_defaut: s
         if cc2.button("Annuler", use_container_width=True):
             st.rerun()
 
-    c1, c2, c3 = st.columns(3)
+    if ephemeral_mode:
+        # Mode éphémère : label + bouton quitter uniquement
+        st.markdown("**Conversation éphémère**")
+        if st.button("↩️", use_container_width=True, help="Quitter le mode éphémère"):
+            st.session_state["ephemeral_mode"] = False
+            st.rerun()
+    else:
+        # Mode normal : liste + boutons
+        c1, c2, c3, c4 = st.columns(4)
 
-    if c1.button("➕", use_container_width=True, help="Nouvelle conversation"):
-        _demarrer_conversation_vierge()
-        st.rerun()
+        if c1.button("➕", use_container_width=True, help="Nouvelle conversation"):
+            _demarrer_conversation_vierge()
+            st.rerun()
 
-    if c2.button("🗑️", use_container_width=True, help="Supprimer cette conversation", disabled=conv_id_actif is None):
-        _dialog_supprimer(conv_id_actif, titres[conv_id_actif])
+        if c2.button("🗑️", use_container_width=True, help="Supprimer cette conversation", disabled=conv_id_actif is None):
+            _dialog_supprimer(conv_id_actif, titres[conv_id_actif])
 
-    if c3.button("✏️", use_container_width=True, help="Renommer cette conversation", disabled=conv_id_actif is None):
-        _dialog_renommer(conv_id_actif, titres[conv_id_actif])
+        if c3.button("✏️", use_container_width=True, help="Renommer cette conversation", disabled=conv_id_actif is None):
+            _dialog_renommer(conv_id_actif, titres[conv_id_actif])
+
+        if c4.button(
+            "🫥",
+            use_container_width=True,
+            type="secondary",
+            help="Activer le mode éphémère",
+            key="btn_ephemere_conv",
+        ):
+            st.session_state["ephemeral_mode"] = True
+            st.rerun()
+

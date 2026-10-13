@@ -294,6 +294,10 @@ else:
 # c'est cette var qui déclenche la sauvegarde/chargement des conversations (y a peut etre plus clean)
 mode_persistant = authentification == "userpass" and utilisateur is not None
 
+# Mode conversation éphémère (uniquement si connecté) : la conversation
+# n'est jamais écrite en BDD, perdue au rechargement de page.
+ephemeral_mode = st.session_state.get("ephemeral_mode", False)
+
 # Visibilité des amphores selon [amphores] mode (disabled / user / all)
 amphores_visibles = amphores_mode == "all" or (amphores_mode == "user" and utilisateur is not None)
 
@@ -601,7 +605,7 @@ with st.sidebar:
         st.session_state.pop("image_generee",   None)
         st.session_state.pop("derniere_reponse",None)
         st.session_state["temps_reponse"] = None
-        if mode_persistant and st.session_state.get("conversation_id") is not None:
+        if (mode_persistant and not st.session_state.get("ephemeral_mode", False)) and st.session_state.get("conversation_id") is not None:
             vider_conversation(st.session_state["conversation_id"])
         st.rerun()
 
@@ -962,7 +966,7 @@ if prompt := st.chat_input("Posez votre question..."):
     # Ajout à l'historique et affichage
     st.session_state.messages.append(msg_user_llm)
     # Gestion persistant
-    if mode_persistant:
+    if mode_persistant and not st.session_state.get("ephemeral_mode", False):
         if st.session_state.get("conversation_id") is None:
             st.session_state["conversation_id"] = creer_conversation(
                 utilisateur["id"], amphore_actif["id"]
@@ -1140,7 +1144,7 @@ if prompt := st.chat_input("Posez votre question..."):
             _bouton_tts(txt_final, cle="tts_chat")
             st.session_state.messages.append(nouveau_message)
             st.session_state["derniere_reponse"] = txt_final
-            if mode_persistant:
+            if mode_persistant and not st.session_state.get("ephemeral_mode", False):
                 ajouter_message(
                     st.session_state["conversation_id"], "assistant", txt_final,
                     pieces_jointes=pieces_jointes_reponse or None,
@@ -1169,7 +1173,7 @@ if prompt := st.chat_input("Posez votre question..."):
 
             st.session_state.messages.append({"role": "assistant", "content": texte})
             st.session_state["derniere_reponse"] = texte
-            if mode_persistant:
+            if mode_persistant and not st.session_state.get("ephemeral_mode", False):
                 ajouter_message(st.session_state["conversation_id"], "assistant", texte)
 
         # Temps de réponse (du clic "Envoyer" à la réponse finale affichée)
@@ -1177,3 +1181,4 @@ if prompt := st.chat_input("Posez votre question..."):
 
         # Rerendu pour que les widgets hors du bloc chat (ex: bouton de téléchargement) soient visibles
         st.rerun()
+
