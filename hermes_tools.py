@@ -411,43 +411,6 @@ def outil_transcrire_audio(donnees: bytes, nom_fichier: str, conf: configparser.
         return f"⚠️ Erreur lors de la transcription audio : {e}"
 
 
-def _extraire_id_youtube(url_ou_id: str) -> Optional[str]:
-    """
-    Extrait l'identifiant vidéo YouTube d'une URL
-    """
-    video_id = url_ou_id.strip()
-    if re.match(r'^[A-Za-z0-9_-]{11}$', video_id):
-        return video_id
-    match = re.search(r'(?:v=|youtu\.be/|/embed/|/shorts/|/live/)([A-Za-z0-9_-]{11})', video_id)
-    return match.group(1) if match else None
-
-def _transcript_youtube_rapide(video_id: str, max_chars: int = 1024000) -> Optional[str]:
-    """
-    Tente de récupérer directement la transcription texte d'une vidéo YouTube via
-    youtube-transcript.ai (rapide, pas de téléchargement ni de whisper.cpp nécessaire).
-    Retourne None si indisponible (vidéo sans sous-titres, erreur réseau, etc.),
-    auquel cas outil_transcrire_video_url se rabat sur yt-dlp + whisper.cpp.
-    """
-    try:
-        transcript_url = f"https://youtube-transcript.ai/transcript/{video_id}.txt"
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
-                "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
-            )
-        }
-        resp = requests.get(transcript_url, headers=headers, timeout=15)
-        resp.raise_for_status()
-        texte = resp.text.strip()
-        if not texte:
-            return None
-        max_chars = min(int(max_chars), 1024000)
-        if len(texte) > max_chars:
-            texte = texte[:max_chars] + f"\n\n[… transcription tronquée à {max_chars} caractères]"
-        return texte
-    except Exception:
-        return None
-
 def _url_video_autorisee(url: str, conf: configparser.ConfigParser) -> bool:
     """
     Vérifie l'URL contre la liste blanche [video_url] domaines_autorises de hermes.conf.
@@ -472,23 +435,18 @@ def _url_video_autorisee(url: str, conf: configparser.ConfigParser) -> bool:
 def outil_transcrire_video_url(url: str, conf: configparser.ConfigParser,
                                 ignorer_debut_secondes: float = 0, ignorer_fin_secondes: float = 0) -> str:
     """
-    Transcrit en texte une vidéo hébergée en ligne, restreinte aux domaines listés dans
-    hermes.conf ([video_url] domaines_autorises).
+    Transcrit en texte une vidéo hébergée en ligne (YouTube, Twitch, Arte...),
+    restreinte aux domaines listés dans hermes.conf ([video_url] domaines_autorises).
 
-    Deux chemins possibles :
-      1. Rapide : si l'URL est une vidéo YouTube et que des sous-titres sont disponibles,
-         la transcription est récupérée directement via youtube-transcript.ai — pas de
-         téléchargement ni de whisper.cpp nécessaire.
-      2. Générique : sinon (ou si le chemin rapide échoue), la piste audio est téléchargée
-         via yt-dlp, normalisée via _extraire_audio_ffmpeg (mêmes optimisations ffmpeg que
-         pour un fichier audio uploadé : silences retirés, découpe début/fin, etc.), puis
-         transcrite via whisper.cpp (outil_transcrire_audio).
+    Tous les sites suivent le même chemin : la piste audio est téléchargée via yt-dlp,
+    normalisée via _extraire_audio_ffmpeg (mêmes optimisations ffmpeg que pour un fichier
+    audio uploadé : silences retirés, découpe début/fin, etc.), puis transcrite via
+    whisper.cpp (outil_transcrire_audio).
 
     Paramètres :
       url                      : URL de la vidéo (doit appartenir à un domaine autorisé)
       conf                     : configuration ([whisper] et [video_url] de hermes.conf)
       ignorer_debut_secondes   : si > 0, coupe ce nombre de secondes au début avant transcription
-                                 (ignoré pour le chemin rapide YouTube, qui renvoie la transcription complète)
       ignorer_fin_secondes     : si > 0, coupe ce nombre de secondes à la fin avant transcription
 
     Nécessite que le binaire `yt-dlp` soit installé et accessible dans le PATH (ou module python installé dans).
@@ -508,15 +466,7 @@ def outil_transcrire_video_url(url: str, conf: configparser.ConfigParser,
             f"Domaines autorisés : {domaines_brut or '(aucun configuré)'}."
         )
 
-    # Chemin rapide : YouTube avec sous-titres disponibles
-    video_id = _extraire_id_youtube(url)
-    if video_id and ignorer_debut_secondes == 0 and ignorer_fin_secondes == 0:
-        rapide = _transcript_youtube_rapide(video_id)
-        if rapide:
-            return f"📺 Transcription YouTube (ID : {video_id}) :\n\n{rapide}"
-        # Pas de sous-titres ou erreur : on continue avec le chemin générique ci-dessous
-
-    # Chemin générique : téléchargement audio (yt-dlp) puis transcription (ffmpeg + whisper.cpp)
+    # Téléchargement audio (yt-dlp) puis transcription (ffmpeg + whisper.cpp)
     with tempfile.TemporaryDirectory() as tmp_dir:
         motif_sortie = os.path.join(tmp_dir, "audio.%(ext)s")
         try:
@@ -1061,8 +1011,8 @@ CATALOGUE_OUTILS = [
                 "de l'utilisateur (résumer, analyser, traduire, répondre à une question, extraire des "
                 "infos...), même si l'utilisateur ne mentionne pas explicitement les mots « transcrire » "
                 "ou « extraire ». Ne jamais deviner ou halluciner le contenu d'une vidéo à partir de son URL. "
-                "Pour YouTube, l'outil utilise en priorité la transcription/les sous-titres officiels quand "
-                "disponibles (rapide) ; sinon, il télécharge la piste audio et la transcrit via whisper.cpp. "
+                "Quel que soit le site (YouTube compris), l'outil télécharge la piste audio et la transcrit "
+                "via whisper.cpp. "
                 "Si l'utilisateur demande de retirer une partie du début ou de la fin (par ex. "
                 "« enlève les 5 premières minutes »), convertis sa demande en secondes et renseigne "
                 "ignorer_debut_secondes et/ou ignorer_fin_secondes en conséquence."
