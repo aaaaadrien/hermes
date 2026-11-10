@@ -621,7 +621,7 @@ def generer_tts(texte: str, conf: configparser.ConfigParser) -> tuple:
     if language:
         payload["language"] = language
 
-    reponse = requests.post(url, json=payload, timeout=200)
+    reponse = requests.post(url, json=payload, timeout=900)
     reponse.raise_for_status()
     mime = reponse.headers.get("Content-Type", "audio/mpeg").split(";")[0].strip()
     return reponse.content, mime
