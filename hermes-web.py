@@ -267,8 +267,6 @@ sys_prompt  = conf.get("agent", "system_prompt")
 model       = conf.get("llm",   "model")
 max_tokens  = conf.getint("llm",   "max_tokens",   fallback=2048)
 temperature = conf.getfloat("llm", "temperature",  fallback=0.7)
-editpasswd = conf.get("amphores", "editpasswd", fallback="").strip()
-editamphores = not bool(editpasswd)  # sans mot de passe défini : édition affichée par défaut
 amphores_mode = conf.get("amphores", "mode", fallback="disabled").strip().lower()
 if amphores_mode not in ("disabled", "user", "all"):
     amphores_mode = "disabled"
@@ -311,12 +309,7 @@ with st.sidebar:
         # Contextes système (Amphores)
         st.subheader("🏺 Amphores")
 
-        # Gestion de la protection de l'édition des amphores globales
-        if "amphores_deverrouille" not in st.session_state:
-            st.session_state["amphores_deverrouille"] = False
-        editamphores = editamphores or st.session_state["amphores_deverrouille"]
-
-        # Amphores globales, chargées une fois par session, persistées en JSON
+        # Amphores globales, chargées une fois par session, persistées en SQLite
         if "amphores" not in st.session_state:
             st.session_state["amphores"] = charger_amphores(sys_prompt)
         amphores_globales = st.session_state["amphores"]
@@ -385,84 +378,6 @@ with st.sidebar:
     # Historique des conversations (uniquement si un compte est réellement connecté)
     if mode_persistant:
         widget_conversations(utilisateur, amphore_actif["id"], amphore_actif["system_prompt"])
-
-    # Gestion des amphores globales (masquée si non visibles ou si editamphores = no)
-    if amphores_visibles and editamphores:
-
-        @st.dialog("➕ Nouvelle amphore globale")
-        def _dialog_nouvelle_amphore():
-            f_nom = st.text_input("Nom *", placeholder="Ex : Expert Python")
-            f_desc = st.text_input("Description", placeholder="Optionnel")
-            f_prompt = st.text_area(
-                "Prompt système *", height=160,
-                placeholder="Tu es un expert Python spécialisé en optimisation de code",
-            )
-            c1, c2 = st.columns(2)
-            if c1.button("💾 Créer", use_container_width=True):
-                if f_nom.strip() and f_prompt.strip():
-                    nouveau = creer_amphore(f_nom, f_prompt, f_desc)
-                    liste = st.session_state["amphores"] + [nouveau]
-                    sauvegarder_amphores(liste)
-                    st.session_state["amphores"] = liste
-                    st.session_state["amphore_actif_id"] = nouveau["id"]
-                    if st.session_state.get("messages") and st.session_state.messages[0]["role"] == "system":
-                        st.session_state.messages[0]["content"] = nouveau["system_prompt"]
-                    st.success(f"✅ Amphore « {f_nom} » créée !")
-                    st.rerun()
-                else:
-                    st.warning("Le nom et le prompt système sont obligatoires.")
-            if c2.button("Annuler", use_container_width=True):
-                st.rerun()
-
-        @st.dialog("✏️ Modifier l'amphore globale")
-        def _dialog_editer_amphore(amphore):
-            est_defaut = amphore["id"] == ID_DEFAUT
-            if est_defaut:
-                st.caption("🔒 Le contexte « Par défaut » ne peut pas être modifié (issu de hermes.conf).")
-            e_nom = st.text_input("Nom", value=amphore["nom"], disabled=est_defaut)
-            e_desc = st.text_input("Description", value=amphore.get("description", ""), disabled=est_defaut)
-            e_prompt = st.text_area("Prompt système", value=amphore["system_prompt"], height=160, disabled=est_defaut)
-
-            c1, c2 = st.columns(2)
-            if c1.button("💾 Sauvegarder", use_container_width=True, disabled=est_defaut):
-                updated = mettre_a_jour_amphore(
-                    st.session_state["amphores"], amphore["id"],
-                    nom=e_nom, description=e_desc, system_prompt=e_prompt,
-                )
-                sauvegarder_amphores(updated)
-                st.session_state["amphores"] = updated
-                if (st.session_state.get("messages") and st.session_state.messages[0]["role"] == "system"
-                        and st.session_state["amphore_actif_id"] == amphore["id"]):
-                    st.session_state.messages[0]["content"] = e_prompt
-                st.success("✅ Amphore mise à jour !")
-                st.rerun()
-            if c2.button("Fermer", use_container_width=True):
-                st.rerun()
-
-            if not est_defaut:
-                #st.divider()
-                st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
-                del_confirm = st.checkbox("Je confirme la suppression", key="chk_del_amphore")
-                if st.button("🗑️ Supprimer cette amphore", use_container_width=True, disabled=not del_confirm):
-                    liste = supprimer_amphore(st.session_state["amphores"], amphore["id"])
-                    sauvegarder_amphores(liste)
-                    st.session_state["amphores"] = liste
-                    # On revient toujours sur le contexte "Par défaut" après suppression
-                    defaut = amphore_par_id(liste, ID_DEFAUT) or liste[0]
-                    st.session_state["amphore_actif_id"] = defaut["id"]
-                    if st.session_state.get("messages") and st.session_state.messages[0]["role"] == "system":
-                        st.session_state.messages[0]["content"] = defaut["system_prompt"]
-                    st.rerun()
-
-        st.caption("🌐 Amphores globales")
-        col_amph_1, col_amph_2 = st.columns(2)
-        if col_amph_1.button("➕ Nouvelle", use_container_width=True, key="btn_nouvelle_amphore"):
-            _dialog_nouvelle_amphore()
-        if col_amph_2.button(
-            "✏️ Éditer", use_container_width=True, key="btn_editer_amphore",
-            disabled=(amphore_actif["id"] == ID_DEFAUT or amphore_actif.get("origine") != "globale"),
-        ):
-            _dialog_editer_amphore(amphore_actif)
 
     # Gestion des amphores perso (utilisateur authentifié uniquement)
     if amphores_visibles and peut_gerer_perso:
@@ -717,6 +632,93 @@ with st.sidebar:
                             else:
                                 st.error(f"❌ {message}")
 
+                if amphores_visibles:
+                    st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+                    st.markdown("**🏺 Amphores globales**")
+                    st.caption("Contextes système partagés (🌐), stockés dans hermes.db.")
+
+                    if "amphores" not in st.session_state:
+                        st.session_state["amphores"] = charger_amphores(sys_prompt)
+                    amphores_globales = st.session_state["amphores"]
+
+                    for a in amphores_globales:
+                        badge = " · 🔒 issu de hermes.conf" if a["id"] == ID_DEFAUT else ""
+                        st.markdown(f"- 🌐 {a['nom']}{badge}")
+
+                    st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+                    st.markdown("**➕ Créer une amphore globale**")
+                    a_nom = st.text_input("Nom", key="admin_amph_nouv_nom", placeholder="Ex : Expert Python")
+                    a_desc = st.text_input("Description", key="admin_amph_nouv_desc", placeholder="Optionnel")
+                    a_prompt = st.text_area(
+                        "Prompt système", key="admin_amph_nouv_prompt", height=160,
+                        placeholder="Tu es un expert Python spécialisé en optimisation de code",
+                    )
+                    if st.button("💾 Créer", use_container_width=True, key="admin_btn_creer_amphore"):
+                        if a_nom.strip() and a_prompt.strip():
+                            nouveau = creer_amphore(a_nom, a_prompt, a_desc)
+                            liste = st.session_state["amphores"] + [nouveau]
+                            sauvegarder_amphores(liste)
+                            st.session_state["amphores"] = liste
+                            st.success(f"✅ Amphore « {a_nom.strip()} » créée !")
+                            st.rerun()
+                        else:
+                            st.warning("Le nom et le prompt système sont obligatoires.")
+
+                    st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+                    st.markdown("**✏️ Gérer une amphore globale existante**")
+                    options_amphores = {a["id"]: a["nom"] for a in amphores_globales}
+                    cible_amph_id = st.selectbox(
+                        "Amphore", options=list(options_amphores.keys()),
+                        format_func=lambda i: options_amphores[i], key="admin_sel_amphore",
+                    )
+                    cible_amphore = amphore_par_id(amphores_globales, cible_amph_id)
+                    if cible_amphore:
+                        est_defaut = cible_amphore["id"] == ID_DEFAUT
+                        if est_defaut:
+                            st.caption("🔒 Le contexte « Par défaut » ne peut pas être modifié (issu de hermes.conf).")
+                        # Clés distinctes par amphore : la valeur affichée suit le selectbox
+                        # (sinon le champ garde la valeur de l'amphore précédemment sélectionnée).
+                        e_nom = st.text_input("Nom", value=cible_amphore["nom"], disabled=est_defaut, key=f"admin_amph_e_nom_{cible_amphore['id']}")
+                        e_desc = st.text_input("Description", value=cible_amphore.get("description", ""), disabled=est_defaut, key=f"admin_amph_e_desc_{cible_amphore['id']}")
+                        e_prompt = st.text_area("Prompt système", value=cible_amphore["system_prompt"], height=160, disabled=est_defaut, key=f"admin_amph_e_prompt_{cible_amphore['id']}")
+                        if st.button("💾 Sauvegarder", use_container_width=True, key="admin_btn_save_amphore", disabled=est_defaut):
+                            updated = mettre_a_jour_amphore(
+                                st.session_state["amphores"], cible_amphore["id"],
+                                nom=e_nom, description=e_desc, system_prompt=e_prompt,
+                            )
+                            sauvegarder_amphores(updated)
+                            st.session_state["amphores"] = updated
+                            if (st.session_state.get("messages") and st.session_state.messages[0]["role"] == "system"
+                                    and st.session_state.get("amphore_actif_id") == cible_amphore["id"]):
+                                st.session_state.messages[0]["content"] = e_prompt
+                            st.success("✅ Amphore mise à jour !")
+                            st.rerun()
+
+                        if not est_defaut:
+                            st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+
+                            def _supprimer_amphore_cible(amphore_id):
+                                """Callback on_click : exécuté avant l'instanciation des widgets,
+                                on peut donc y réaligner leurs clés (selectbox, checkbox)."""
+                                liste = supprimer_amphore(st.session_state["amphores"], amphore_id)
+                                sauvegarder_amphores(liste)
+                                st.session_state["amphores"] = liste
+                                # On revient toujours sur le contexte "Par défaut" après suppression
+                                defaut = amphore_par_id(liste, ID_DEFAUT) or liste[0]
+                                st.session_state["amphore_actif_id"] = defaut["id"]
+                                # Le selectbox doit pointer sur une amphore encore existante
+                                st.session_state["admin_sel_amphore"] = defaut["id"]
+                                st.session_state["admin_chk_del_amphore"] = False
+                                if st.session_state.get("messages") and st.session_state.messages[0]["role"] == "system":
+                                    st.session_state.messages[0]["content"] = defaut["system_prompt"]
+
+                            del_confirm = st.checkbox("Je confirme la suppression", key="admin_chk_del_amphore")
+                            st.button(
+                                "🗑️ Supprimer cette amphore", use_container_width=True,
+                                key="admin_btn_del_amphore", disabled=not del_confirm,
+                                on_click=_supprimer_amphore_cible, args=(cible_amphore["id"],),
+                            )
+
                 st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
                 st.markdown("**📦 Modules Python & serveur**")
                 st.caption("Relance `pip install -r requirements.txt --upgrade` avec le pip du venv actif.")
@@ -917,10 +919,6 @@ def _detecter_tool_choice_url(prompt: str, conf: configparser.ConfigParser, noms
 if prompt := st.chat_input("Posez votre question..."):
 
     #### Dispatcher de commandes (interceptées avant tout appel au LLM) - TODO ya peut etre mieux
-    def _cmd_amphores(arg):
-        if amphores_visibles and editpasswd and arg == editpasswd:
-            st.session_state["amphores_deverrouille"] = True
-
     def _cmd_clear(arg):
         prompt_actif = amphore_actif.get("system_prompt", sys_prompt)
         st.session_state.messages = [{"role": "system", "content": prompt_actif}]
@@ -935,7 +933,6 @@ if prompt := st.chat_input("Posez votre question..."):
         st.session_state["debug_mode"] = arg.strip().lower() in ("on", "1", "true")
 
     COMMANDES = {
-        "/amphores": _cmd_amphores,
         "/clear": _cmd_clear,
         "/debug": _cmd_debug,
     }

@@ -203,14 +203,9 @@ Dans le sélecteur, les amphores globales sont préfixées 🌐 et les perso �
 # user     : disponibles uniquement pour les utilisateurs authentifiés
 # all      : disponibles pour tout le monde, authentifié ou non
 mode = disabled
-
-# Mot de passe pour déverrouiller la création/modification/suppression des amphores
-# GLOBALES depuis l'interface (commande /amphores <mdp> dans le chat).
-# Laisser vide = édition toujours affichée par défaut (pas de protection).
-editpasswd = MDP
 ```
 
-_Notes :_ les amphores globales sont consultables mais pas modifiables depuis l'interface. Pour afficher le menu de modification des amphores : commande `/amphores <mdp>` dans le chat.
+_Notes :_ les amphores globales sont consultables par tous les utilisateurs autorisés (selon `mode`), mais leur création/modification/suppression est réservée aux comptes **administrateurs**, via la section « 🏺 Amphores globales » du panneau « 🛠️ Admin » de la sidebar (nécessite donc `[auth] authentification = userpass`).
 
 
 ## Comptes utilisateurs & historique des conversations (interface web)

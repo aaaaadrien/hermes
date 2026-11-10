@@ -94,9 +94,9 @@ enable_generation_image   = true
 # all      : disponibles pour tout le monde, authentifié ou non
 mode = disabled
 
-# Mot de passe pour déverrouiller l'édition des amphores (commande /amphores <mdp> dans le chat).
-# Laisser vide = édition toujours affichée par défaut (pas de protection).
-editpasswd = MDP
+# L'édition des amphores globales (création/modification/suppression) se fait
+# depuis le panneau d'administration « 🛠️ Admin » de la sidebar,
+# réservé aux comptes administrateurs (nécessite [auth] authentification = userpass).
 
 [auth]
 # authentification : permet de gérer l'authentification dans l'outil
