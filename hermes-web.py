@@ -267,6 +267,18 @@ sys_prompt  = conf.get("agent", "system_prompt")
 model       = conf.get("llm",   "model")
 max_tokens  = conf.getint("llm",   "max_tokens",   fallback=2048)
 temperature = conf.getfloat("llm", "temperature",  fallback=0.7)
+
+# Niveau de raisonnement du modèle : valeurs de reasoning_effort de l'API OpenAI standard
+# (none / minimal / low / medium / high / xhigh, niveau fixe et sélecteur masqué),
+# "user" (sélecteur affiché dans la sidebar) ou vide (rien n'est envoyé, comportement par défaut du modèle)
+NIVEAUX_RAISONNEMENT = {
+    "none": "Aucun", "minimal": "Minimal", "low": "Faible",
+    "medium": "Moyen", "high": "Élevé", "xhigh": "Très élevé",
+}
+raisonnement_conf = conf.get("llm", "raisonnement", fallback="").strip().lower()
+if raisonnement_conf not in NIVEAUX_RAISONNEMENT and raisonnement_conf != "user":
+    raisonnement_conf = ""
+
 amphores_mode = conf.get("amphores", "mode", fallback="disabled").strip().lower()
 if amphores_mode not in ("disabled", "user", "all"):
     amphores_mode = "disabled"
@@ -457,6 +469,17 @@ with st.sidebar:
     
     #st.divider()
     st.markdown("<hr style='margin: 6px 0; opacity: 0.3;'>", unsafe_allow_html=True)
+
+    # Niveau de raisonnement (affiché uniquement si [llm] raisonnement = user)
+    if raisonnement_conf == "user":
+        st.selectbox(
+            "🧠 Raisonnement",
+            options=list(NIVEAUX_RAISONNEMENT.keys()),
+            index=list(NIVEAUX_RAISONNEMENT).index("medium"),
+            format_func=lambda k: NIVEAUX_RAISONNEMENT[k],
+            key="raisonnement_user",
+            help="Niveau de réflexion demandé au modèle. N'a d'effet que si le modèle (ou son template) le supporte.",
+        )
 
     # Fichiers à joindre
     st.subheader("📎 Fichier joint")
@@ -868,6 +891,47 @@ if "messages" not in st.session_state:
 # Client LLM (mis en cache)
 client = creer_client(conf.get("llm", "base_url"), conf.get("llm", "api_key"))
 
+
+def _extra_body_raisonnement() -> dict:
+    """
+    Paramètres de niveau de raisonnement à joindre à une requête LLM, selon [llm] raisonnement
+    (valeur fixe) ou le choix de l'utilisateur (mode "user"). Le modèle en face est inconnu :
+    on envoie les deux conventions courantes, les paramètres non reconnus étant ignorés :
+      - reasoning_effort (API OpenAI, gpt-oss...) : none / minimal / low / medium / high / xhigh
+      - chat_template_kwargs.enable_thinking (Qwen3...) : True / False
+    Retourne {} si aucun niveau n'est configuré.
+    """
+    if raisonnement_conf == "user":
+        niveau = st.session_state.get("raisonnement_user", "medium")
+    else:
+        niveau = raisonnement_conf
+    if niveau not in NIVEAUX_RAISONNEMENT:
+        return {}
+    # Les templates de chat type gpt-oss n'acceptent que low / medium / high : on ramène
+    # les niveaux hors de cette plage sur le plus proche.
+    effort_template = {"none": "low", "minimal": "low", "xhigh": "high"}.get(niveau, niveau)
+    return {"extra_body": {
+        "reasoning_effort": niveau,
+        "chat_template_kwargs": {
+            "enable_thinking": niveau != "none",
+            "reasoning_effort": effort_template,
+        },
+    }}
+
+
+def _completion(**kwargs):
+    """
+    Équivalent de client.chat.completions.create(**kwargs) avec le niveau de raisonnement
+    en plus. Si le serveur refuse ces paramètres, on retente sans (plutôt que de planter).
+    """
+    extra = _extra_body_raisonnement()
+    if extra:
+        try:
+            return client.chat.completions.create(**kwargs, **extra)
+        except Exception:
+            pass
+    return client.chat.completions.create(**kwargs)
+
 # Affichage de l'historique
 for i, message in enumerate(st.session_state.messages):
     role    = message["role"]    if isinstance(message, dict) else message.role
@@ -986,7 +1050,7 @@ if prompt := st.chat_input("Posez votre question..."):
         noms_outils_dispo = {o["function"]["name"] for o in outils}
         tool_choice = _detecter_tool_choice_url(prompt, conf, noms_outils_dispo) or "auto"
         try:
-            reponse = client.chat.completions.create(
+            reponse = _completion(
                 model=model,
                 messages=st.session_state.messages,
                 tools=outils,
@@ -998,7 +1062,7 @@ if prompt := st.chat_input("Posez votre question..."):
             # Si pas de support de tool_choice ciblant une fonction précice
             # on retente sans forcer, plutôt que de planter la conversation.
             try:
-                reponse = client.chat.completions.create(
+                reponse = _completion(
                     model=model,
                     messages=st.session_state.messages,
                     tools=outils,
@@ -1083,7 +1147,7 @@ if prompt := st.chat_input("Posez votre question..."):
             # Synthese et réponse finale
             with st.spinner("Rédaction de la réponse..."):
                 try:
-                    final     = client.chat.completions.create(
+                    final     = _completion(
                         model=model,
                         messages=st.session_state.messages,
                         max_tokens=max_tokens,
@@ -1112,7 +1176,7 @@ if prompt := st.chat_input("Posez votre question..."):
                                 "en langage naturel, en te basant sur les résultats déjà obtenus."
                             ),
                         }]
-                        final_retry = client.chat.completions.create(
+                        final_retry = _completion(
                             model=model,
                             messages=messages_retry,
                             max_tokens=max_tokens,
@@ -1153,7 +1217,7 @@ if prompt := st.chat_input("Posez votre question..."):
             #st.markdown(texte)
             # Activer le mode streaming
             try:
-                flux = client.chat.completions.create(
+                flux = _completion(
                     model=model,
                     messages=st.session_state.messages,
                     max_tokens=max_tokens,
@@ -1178,4 +1242,3 @@ if prompt := st.chat_input("Posez votre question..."):
 
         # Rerendu pour que les widgets hors du bloc chat (ex: bouton de téléchargement) soient visibles
         st.rerun()
-

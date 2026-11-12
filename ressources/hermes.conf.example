@@ -14,6 +14,14 @@ max_tokens = 65536
 # Température
 temperature = 0.7
 
+# Niveau de raisonnement demandé au modèle (le modèle en face peut être n'importe lequel :
+# l'option n'a d'effet que s'il (ou son template de chat) la supporte, sinon elle est ignorée).
+# none / minimal / low / medium / high / xhigh : niveau imposé à tous les utilisateurs
+#      (valeurs de reasoning_effort de l'API OpenAI standard, sélecteur masqué)
+# user                    : un sélecteur "Raisonnement" est affiché dans l'interface web
+# (vide)                  : rien n'est evoyé, comportement par défaut du modèle
+raisonnement =
+
 [whisper]
 # URL de base du serveur whisper.cpp
 base_url = http://localhost:8081
